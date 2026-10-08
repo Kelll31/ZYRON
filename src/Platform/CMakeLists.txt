@@ -5,7 +5,10 @@
 add_library(zyron_platform STATIC)
 add_library(zyron::platform ALIAS zyron_platform)
 
-target_sources(zyron_platform PRIVATE Common/BaseFileSystem.cpp)
+target_sources(zyron_platform PRIVATE
+  Common/BaseFileSystem.cpp
+  Release/UpdateChecker.cpp
+  Release/FirstRunManager.cpp)
 
 if(WIN32)
   target_sources(zyron_platform PRIVATE

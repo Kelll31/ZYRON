@@ -15,7 +15,8 @@ add_library(zyron_ui STATIC
   Settings/ModelManagerComponent.cpp
   Settings/BackgroundQueueComponent.cpp
   AI/RecommendationPanel.cpp
-  AI/SetBuilderComponent.cpp)
+  AI/SetBuilderComponent.cpp
+  FirstRun/FirstRunWizardComponent.cpp)
 add_library(zyron::ui ALIAS zyron_ui)
 
 target_include_directories(zyron_ui PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/..")

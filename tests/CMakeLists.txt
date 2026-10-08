@@ -128,7 +128,8 @@ zyron_add_test_executable(zyron_ui_tests
   ui/test_two_deck_shell.cpp
   ui/test_model_manager_view.cpp
   ui/test_background_queue_view.cpp
-  ui/test_ai_assistant_views.cpp)
+  ui/test_ai_assistant_views.cpp
+  ui/test_first_run_wizard.cpp)
 target_link_libraries(zyron_ui_tests PRIVATE zyron::ui)
 
 zyron_add_test_executable(zyron_midi_tests
@@ -137,6 +138,11 @@ zyron_add_test_executable(zyron_midi_tests
   midi/test_midi_learn.cpp
   midi/test_hid_manager.cpp)
 target_link_libraries(zyron_midi_tests PRIVATE zyron::midi zyron::core)
+
+zyron_add_test_executable(zyron_release_tests
+  release/test_update_checker.cpp
+  release/test_first_run_manager.cpp)
+target_link_libraries(zyron_release_tests PRIVATE zyron::platform zyron::core)
 
 zyron_add_test_executable(zyron_mvp1_gate_tests
   integration/test_mvp1_gate.cpp)

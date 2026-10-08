@@ -45,3 +45,8 @@ if(ZYRON_ENABLE_TESTS)
   enable_testing()
   add_subdirectory(tests)
 endif()
+
+if(ZYRON_BUILD_APP)
+  include(cmake/CPackConfig.cmake)
+endif()
+

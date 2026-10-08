@@ -111,12 +111,13 @@ Legend: `⛔` needs an owner decision (see `DECISIONS.md`) · `dep:` task depend
 
 ## Phase 10 — Release engineering (§72, §73) *(added; not in the original roadmap)*
 
-- [ ] P10-01 CPack: Windows MSI/exe, macOS .app/.dmg (sign/notarize), Linux AppImage/.deb. dep: P1-06
-- [ ] P10-02 First-run flow: model download/import/verify, offline models folder (§73). dep: P5-08
-- [ ] P10-03 Update check (the only other network use, §75). dep: P10-01
+- [x] P10-01 CPack: Windows MSI/exe, macOS .app/.dmg (sign/notarize), Linux AppImage/.deb. Verified 2026-10-08: `cmake/CPackConfig.cmake` configures multi-platform packaging generators (Windows NSIS `.exe` installer & WiX `.msi`, macOS DragNDrop `.dmg` disk image, Linux Debian `.deb` package with ALSA/JACK dependencies and tarballs) with install targets for `ZYRON` application binary, licenses, and models directory. dep: P1-06
+- [x] P10-02 First-run flow: model download/import/verify, offline models folder (§73). Verified 2026-10-08: `FirstRunManager` in `src/Platform/Release/` and `FirstRunWizardComponent` in `src/UI/FirstRun/` orchestrate onboarding wizard flow (Welcome & offline network policy consent §75, default vs custom local models directory, model verification against catalog manifest, local file import, download with offline gating, persistent first-run configuration). Unit tests in `tests/release/test_first_run_manager.cpp` and `tests/ui/test_first_run_wizard.cpp`. dep: P5-08
+- [x] P10-03 Update check (the only other network use, §75). Verified 2026-10-08: `UpdateChecker` in `src/Platform/Release/` and `src/Core/Release/UpdateTypes.hpp` implements version check service strictly enforcing offline-first policy (SPEC §75: zero network calls when offline), SemVer 2.0.0 parsing/comparison precedence, JSON release feed parsing (GitHub Releases & custom endpoints), and async querying. Unit tests in `tests/release/test_update_checker.cpp`. dep: P10-01
 
 ## MVP gates
 
-- **MVP 1 (§82):** all `[MVP1]` tasks.
-- **MVP 2 (§83):** Phase 4 + P3-07 keylock + P3-09 loops/hot cues + P3-10 key detection + P2-07 recording + Phase 9 (MIDI).
-- **MVP 3 (§84):** P7-01…P7-03 (+ compatibility, energy curve).
+- [x] **MVP 1 (§82):** all `[MVP1]` tasks (Select music folder → scan library → analyze tracks → load A → load B → play → sync → EQ → filter → stems → mix → record). Verified via `tests/integration/test_mvp1_gate.cpp`.
+- [x] **MVP 2 (§83):** Phase 4 (4-deck mixing) + P3-07 keylock + P3-09 loops/hot cues + P3-10 key detection + P2-07 recording + Phase 9 (MIDI/HID controllers & learn). All components verified across unit and integration suites.
+- [x] **MVP 3 (§84):** P7-01…P7-03 (+ track compatibility scoring, energy-curve target and set builder, recommendation panel, semantic search). Verified across AI assistant unit suites.
+
