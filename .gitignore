@@ -1,0 +1,45 @@
+# Build outputs
+build/
+out/
+cmake-build-*/
+.vs/
+.cache/
+CMakeUserPresets.json
+compile_commands.json
+*.user
+
+# Dependencies
+vcpkg_installed/
+.vcpkg/
+_deps/
+
+# AI models and caches (large, downloaded/imported by the Model Manager)
+models/*
+!models/.gitkeep
+*.onnx
+*.pt
+*.pth
+*.gguf
+stem_cache/
+*.peaks
+
+# Local state
+*.db
+*.db-wal
+*.db-shm
+recordings/
+.env
+.env.*
+
+# Python tooling for hooks/tests
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Claude Code local overrides
+.claude/settings.local.json
+.claude/scheduled_tasks.lock
+
+# OS
+.DS_Store
+Thumbs.db

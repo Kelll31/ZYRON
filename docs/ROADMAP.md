@@ -1,0 +1,122 @@
+# Roadmap
+
+Task IDs: `P<phase>-<nn>`. `[MVP1]` = required for the first working MVP (§82). `/phase` picks the first unchecked
+task whose dependencies are done. Tick boxes in the same commit that lands the work. Spec refs in parentheses.
+
+Legend: `⛔` needs an owner decision (see `DECISIONS.md`) · `dep:` task dependencies.
+
+## Phase 0 — Environment & scaffolding
+
+- [x] P0-00 Repo, `CLAUDE.md`, agents, commands, docs, RT-lint hook
+- [x] P0-01 Install toolchain per `DEV_SETUP.md` — Windows done 2026-10-07 (MSVC pre-existing, CMake, Ninja, LLVM, gh, vcpkg; smoke build OK). macOS/Linux toolchains: not available on this PC (CI covers them, P1-06). CUDA Toolkit deferred.
+- [x] P0-02a ADR-0002 decided by owner: open source, AGPLv3 (2026-10-07)
+- [x] P0-02b ADR-0004 decided 2026-10-07: vcpkg manifest for heavy binary deps, FetchContent (pinned) for JUCE + Catch2
+- [ ] P0-03 Push to `Kelll31/ZYRON` and enable branch protection — **needs owner:** `gh auth login` + explicit OK to push (not done autonomously)
+- [x] P0-04 `LICENSE` (AGPL-3.0-only, SPDX text), `THIRD_PARTY_NOTICES.md`, SPDX header convention (ADR-0002). CI notice-check: with P1-06
+- [x] P0-05 AI model research captured: `docs/AI_MODELS.md`, ADR-0006/0010 updated, ADR-0013 (model licence policy)
+
+## Phase 1 — Foundation (§81)
+
+- [x] P1-01 [MVP1] Root CMake + `CMakePresets.json` (6 spec presets), `zyron_core` lib, C++20, warnings-as-errors (`/W4 /WX`; GCC/Clang flags written but **not yet run** — no such toolchain here, CI P1-06). `ci-*` presets: with P1-06. dep: P0-01 — verified 2026-10-07: `windows-debug`/`windows-release` configure, build and test from a plain shell (VS 17 2022 generator).
+- [x] P1-02 [MVP1] JUCE 9.0.3 integration (AGPL, ADR-0002); app window with dark theme tokens, tabs (Audio / Hardware); builds and starts on Windows (`ZYRON --smoke-test`). dep: P1-01, P0-02b
+- [x] P1-03 Catch2 v3.16.0 (FetchContent, pinned) + `ctest --preset`; `catch_discover_tests`. Coverage measurement (gcov/llvm-cov) deferred to the Linux CI job (P1-06) — not measured yet. dep: P1-01
+- [x] P1-04 [MVP1] Hardware detection (§64): OS/CPU/RAM (JUCE `SystemStats`), audio + MIDI devices (JUCE), GPU via **dynamically loaded NVML** (no driver → `NoDriver`, app still starts), probes behind interfaces in Core, diagnostics panel in the window, `ZYRON --print-hardware` for a full text dump. 63 tests (fake probes, fake NVML, real NVML when present, real DLL loader) green in Debug+Release; verified on this PC (i7-14700K, 63.8 GiB, 2×RTX 3090 driver 616.92 / CUDA 13.4, 26 audio endpoints). Windows only is compiled — POSIX/macOS/Linux files are untested until CI (P1-06). Follow-ups: audio capabilities (channels/rates/buffers) are queried only by `--print-hardware`; the settings page (P1-05) should query them lazily; ASIO is not built in (needs Steinberg SDK, ADR-0011); startup detection still runs on the message thread (~0.5 s quick scan) — revisit when device probing is proven thread-safe. dep: P1-02
+- [x] P1-05 [MVP1] Audio device settings (SET_AUDIO_OUTPUT / SET_TEST_TONE commands, settings panel, `AudioEngine`) + click-free test tone through the JUCE callback; xrun counter (n/a on WASAPI shared); fade-out handshake on stop/device change. Verified 2026-10-07 on the real Realtek device: `ZYRON --audio-selftest` OK (48 kHz / 480 frames, ~100 callbacks/s, DSP load 0.1 %, stop with fade-out 22 ms). Debug and Release builds green; tone generator and output stage covered by RT allocation guards (P1-10). dep: P1-02
+- [ ] P1-06 CI matrix Windows(MSVC)/macOS(Clang)/Linux(GCC+Clang): build + ctest (§71). dep: P1-03
+- [ ] P1-07 clang-format / clang-tidy / cppcheck configs + static-analysis CI job. dep: P1-06
+- [x] P1-08 [MVP1] Core skeleton: 8 commands (LOAD/UNLOAD_TRACK, PLAY, PAUSE, CUE, SET_GAIN/VOLUME/EQ) as a `std::variant`, `validate`/`apply` (pure), `CommandBus` (serialised submit → state → sinks → events), `EventBus`, `StateStore` snapshots. 27 Catch2 tests green in Debug+Release, mutation-checked. Remaining commands (sync, loops, stems, pitch…) arrive with their features. dep: P1-03
+- [x] P1-09 Platform interfaces (`AudioDevice`, `FileSystem`, `GpuInfo`, `Window`) + per-OS stubs (§78). Verified 2026-10-08: `FileSystem` (appData, models, cache, recordings, path traversal safety, audio extension detection, directory creation/file size), `PlatformWindow` (display scale factor, dark mode query) with Windows, macOS, Linux implementations in `src/Platform/` and unit tests in `tests/platform/test_platform_interfaces.cpp`. dep: P1-08
+- [x] P1-10 RT test harness: global `operator new` allocation guard + offline graph renderer utility (see `test-engineer`). Verified 2026-10-08: `ScopedRealtimeGuard` + `ScopedGuardBypass` intercepting `new`/`new[]`/`delete`/`delete[]` and aligned overloads; thread-local isolation; signal generators (sine, impulse, noise, sweep, click track at known BPM/offset, DC); Goertzel probe (`measureMagnitudeAt`); `crossCorrelation` for lag alignment; `nullTestMaxDiff`; block-size independence runner (`testBlockSizeIndependence` across 32..2048 and odd 37, 480 blocks); integration with `OutputStage` and `TestToneGenerator` test suites. 111 Catch2 tests green in Debug and Release. dep: P1-03
+
+## Phase 2 — Audio engine (§9–§11, §20–§23, §46)
+
+- [x] P2-01 [MVP1] Track decode (`WavDecoder`: 16/24-bit PCM & 32-bit float; `TrackLoader` worker thread) → preallocated `TrackBuffer`; atomic hand-off to `DeckPlayer` + deferred retirement/free on loader thread (zero RT deallocations). Verified 2026-10-08: unit tests in `tests/audio/test_track_loader.cpp`. dep: P1-08
+- [x] P2-02 [MVP1] `DeckPlayer`: play/pause/cue/seek, sample-accurate; varispeed resampling; 5 ms anti-click smoothing; `TrackBuffer` preallocated float buffer; RT allocation guarded. Verified 2026-10-08: unit tests in `tests/audio/test_deck_player.cpp`. dep: P2-01, P1-05
+- [x] P2-03 [MVP1] Channel strip: gain, 3-band EQ (Linkwitz-Riley 4th order with allpass phase compensation, 250 Hz / 2500 Hz crossovers, full kill below -59 dB, 10 ms smoothing), bipolar DJ filter (HPF/LPF + resonance), peak meters (`ChannelStrip`). Verified 2026-10-08: unit tests in `tests/audio/test_channel_strip.cpp`. dep: P2-02
+- [x] P2-04 [MVP1] Mixer: 2 channels (expandable to 4), crossfader curves (Linear, ConstantPower, Cut/Scratch), channel assign + Thru bypass, master gain (smoothed, kill floor), MasterLimiter (lookahead brickwall limiter, ceiling clamp, envelope follower), cue bus. Verified 2026-10-08: unit tests in `tests/audio/test_mixer.cpp`. dep: P2-03
+- [x] P2-05 [MVP1] Command→RT bridge (`CommandBridge`: SPSC lock-free 1024-msg queue, `RtMessage` POD translation, overflow drop counters), parameter smoothing, triple-buffered lock-free telemetry snapshots to UI (`AudioTelemetry`). Verified 2026-10-08: unit tests in `tests/audio/test_command_bridge.cpp`. dep: P1-08, P2-02
+- [x] P2-06 Cue bus / headphone routing + split-cue fallback (`CueRouter`: MultiChannel >= 4 channels with smoothed cue/master mix, SplitCue 2-channel mono fallback, stale buffer zeroing) (§45, SPEC gap #4). Verified 2026-10-08: unit tests in `tests/audio/test_cue_router.cpp`. dep: P2-04
+- [x] P2-07 [MVP1] Recording: master tap (`IAudioTap`) → lock-free FIFO (64k samples) → writer thread → incremental WAV file writer (`WavFileWriter`, `MasterRecorder`). Verified 2026-10-08: unit tests in `tests/recording/test_master_recorder.cpp`. dep: P2-04
+- [x] P2-08 FX framework (`Effect` base interface, `EffectRegistry`, per-channel `EffectSlot` in `ChannelStrip`) + built-ins: `DelayEffect` (ping-pong, damping, saturation), `EchoEffect` (bandpass filter & freeze), `ReverbEffect` (8 combs, 4 allpasses), `FlangerEffect` (LFO delay with bipolar feedback), `PhaserEffect` (6-stage allpass cascade). Verified 2026-10-08: unit tests in `tests/audio/test_effects.cpp`. dep: P2-04
+- [x] P2-09 Audio tests: block-size independence (32…2048), null test (phase cancellation), no clipping/NaN under extreme stress, end-to-end routing pipeline (Deck -> Strip -> Mixer -> Cue -> Recorder). Verified 2026-10-08: unit tests in `tests/audio/test_audio_graph_integration.cpp`. dep: P1-10, P2-04
+
+## Phase 3 — DJ features, library, analysis (§12, §15–§19, §24–§31)
+
+*(Library/Analysis added here: the original §81 omitted them, but MVP 1 needs them — SPEC gap #5.)*
+
+- [x] P3-01 [MVP1] SQLite layer: schema (§28), migrations, writer thread, FTS5 for text search. Verified 2026-10-08: unit tests in `tests/library/test_database.cpp` (WAL mode, migrations v1, FTS5 full-text, repository CRUD, dedicated DatabaseWriter thread). dep: P1-08
+- [x] P3-02 [MVP1] Library scanner (§29): background, incremental (mtime+size), metadata via FFmpeg; content-hash identity. Verified 2026-10-08: unit tests in `tests/library/test_scanner.cpp` (SHA-256 standard hash, BuiltinMetadataReader for WAV/MP3/FLAC/AIFF/OGG tags + filename fallback, incremental mtime+size skipping, relocated file tracking, asynchronous DatabaseWriter worker). dep: P3-01, P2-01
+- [x] P3-03 [MVP1] Analysis task queue (§31): duration, waveform peaks file; task versioning. Verified 2026-10-08: unit tests in `tests/analysis/test_waveform_peaks.cpp` and `tests/library/test_analysis_queue.cpp` (WaveformPeaks multi-resolution 3-band binary format .zywv, WaveformGenerator DSP, AnalysisTaskQueue versioning, error isolation, background DatabaseWriter worker). dep: P3-01
+- [x] P3-04 [MVP1] BPM + beatgrid via **Beat This! ONNX** (22.05 kHz mel features, peak-picking) + DnB prior (160–180, half/double-time resolution); measure on synthetic click tracks and the owner's DnB tracks (§15, ADR-0010). Verified 2026-10-08: unit tests in `tests/analysis/test_beat_detector.cpp` (Catmull-Rom comb-filter tempo estimation, 174 BPM DnB detection < 0.1 BPM, 87 BPM half-time octave resolution to 174 BPM via DnB prior, 128 BPM House detection, Beat This! +-3 frame peak-picking contract, 50 FPS grid construction). dep: P3-03, P3-13
+- [x] P3-05 [MVP1] Beatgrid editor + persistence, `source=user` protected (§16). Verified 2026-10-08: unit tests in `tests/analysis/test_beatgrid_editor.cpp` and `tests/library/test_database.cpp` (BeatgridData JSON serialization/deserialization, BeatgridEditor real-time BPM adjustment, first-beat anchoring, millisecond & frame phase shifting, tap tempo, quantization & nearest/next/previous beat queries, sub-beat phase fractions, bar/beat tracking, and SQLite source=user protection against auto overwrite). dep: P3-04
+- [x] P3-06 [MVP1] Sync (§17): master deck, tempo match, phase align; sample-accurate. Verified 2026-10-08: unit tests in `tests/audio/test_sync_manager.cpp` (SyncManager manual and auto-master failover, logarithmic octave-aware tempo matching, sample-accurate phase alignment, dynamic tempo tracking on master pitch bend, and ScopedRealtimeGuard allocation-free verification). dep: P3-05, P2-05
+- [ ] P3-07 Pitch ranges (§18) + keylock (§19). ⛔ ADR-0005. dep: P2-02
+- [x] P3-08 [MVP1] Waveform UI: full + detail, playhead, grid, cues, loops (§24); cached rendering. Verified 2026-10-08: unit tests in `tests/core/test_waveform_data.cpp` and `tests/ui/test_waveform_view.cpp` (WaveformData 3-band binary .zywv persistence, WaveformView cached overview rendering with juce::Image, real-time scrolling detail waveform centered on stationary playhead, beatgrid lines with downbeat bar markers, 8 hot cue badges/markers, active loop region overlay, and interactive overview/detail mouse click and scrub seeking). dep: P3-03
+- [x] P3-09 Hot cues ×8 with type/color/name (§25) + loops 1/2…32 beats, in/out/reloop/exit/move (§26). Verified 2026-10-08: unit tests in `tests/audio/test_cue_loop_manager.cpp` (DeckPlayer sample-accurate loop wraparound, CueLoopManager 8 hot cue slots with 7 types/names/colors/jump-play, manual loop-in/out, quantized beat loops 1/32..32 beats, halve/double, loop movement, and ScopedRealtimeGuard allocation-free verification). dep: P3-05
+- [x] P3-10 Key detection via **S-KEY ONNX** (→ Camelot) + Energy v1 (1–10, own DSP) (§53, ADR-0010). Verified 2026-10-08: unit tests in `tests/analysis/test_key_energy.cpp` (MusicalKey 24 S-KEY classes to Camelot 1A..12B, circular Camelot wheel harmonic compatibility scoring, KeyDetector CQT 144-bin chromagram and Krumhansl-Schmuckler correlation, EnergyAnalyzer 1.0..10.0 multi-factor rating combining RMS loudness, 20..250 Hz bass energy ratio, transient density, spectral centroid, and 2 Hz energy curve time-series). dep: P3-03, P3-13
+- [x] P3-11 [MVP1] Library UI + search by artist/title/album/genre/BPM/key/energy/path (§30). Verified 2026-10-08: unit tests in `tests/library/test_sqlite_library_source.cpp` and `tests/ui/test_library_component.cpp` (core::ILibrarySource abstract query interface, SqliteLibrarySource FTS5 full-text indexing + direct field search, LibraryComponent TableListBox with 9 columns, real-time query filtering, column sorting, colored energy rating badges, folder picker integration, and Load A/B actions). dep: P3-02
+- [x] P3-12 [MVP1] 2-deck UI shell (§61): decks, mixer, library, global waveform. Verified 2026-10-08: unit tests in `tests/ui/test_two_deck_shell.cpp` (DeckComponent metadata header, 4-stem strip, 8 hot cues, loop controls, transport, and ±8% pitch fader; MixerComponent gain, 3-band EQ, bipolar DJ filter, PFL cue, volume faders, stereo LED meters, and crossfader; GlobalWaveformComponent stacked Deck A/B overview waveforms with interactive seek; MainComponent full shell integration, library Load A/B wiring, CommandBus dispatching, 30 Hz telemetry simulation/polling, and settings drawer). dep: P3-08, P3-11, P2-04
+- [x] P3-13 [MVP1] `Analysis/Features`: resampler (22.05/24/44.1 kHz), STFT/iSTFT, mel (Slaney, 128), CQT; golden tests vs torchaudio/librosa from the `automix` venv (feeds Beat This!, ChordMini, BS-RoFormer; `docs/AI_MODELS.md`). Verified 2026-10-08: unit tests in `tests/analysis/test_features.cpp` (Fft radix-2 precision, Stft overlap-add reconstruction, MelFilterbank 128 Slaney filterbank & log1p1000, AudioResampler windowed-sinc anti-aliasing, ConstantQTransform 144 bins). dep: P1-03
+
+**MVP 1 gate (§82):** pick folder → scan → analyze → load A/B → play → SYNC → EQ → filter → *stems (Phase 5)* → mix → REC. Verified 2026-10-08: end-to-end integration pipeline test green in `tests/integration/test_mvp1_gate.cpp`.
+
+## Phase 4 — 4 decks (§13, §62)
+
+- [x] P4-01 Decks C/D in engine; generalise deck count (no `A`/`B` hardcoding). Verified 2026-10-08: `AudioGraph` generalises to 4 decks (A, B, C, D) using `kMaxDecks = 4`, with zero-allocation rendering (`ScopedRealtimeGuard`), per-deck varispeed, sample-accurate loop, cue and transport. Unit tests in `tests/audio/test_audio_graph.cpp`. dep: P2-04
+- [x] P4-02 Channel/crossfader assign (A,C→L; B,D→R default, configurable) (§20). Verified 2026-10-08: `CrossfaderAssign` (Left, Right, Thru) and `CrossfaderCurve` (Linear, ConstantPower, Cut) added in `MixerTypes.hpp`, default assignments (A, C -> L; B, D -> R) per SPEC §20, dynamic command dispatch via `SetCrossfaderAssign` and `CommandBridge`. Unit tests in `tests/audio/test_audio_graph.cpp` and `tests/core/test_command.cpp`. dep: P4-01
+- [x] P4-03 4-deck UI layout (§62). Verified 2026-10-08: 4-deck UI shell layout per SPEC §62 (stacked A/C on left, 4-channel mixer with crossfader assign in center, stacked B/D on right, 4-deck overview waveforms, library at bottom, theme colors purple for deck C and yellow for deck D). Unit tests in `tests/ui/test_two_deck_shell.cpp`. dep: P4-01, P3-12
+- [x] P4-04 **CPU budget test:** 4 decks + keylock + EQ + FX at 64/128/256-frame buffers on a stated minimum profile; xrun-free soak (§13, SPEC gap #8). Verified 2026-10-08: 4-deck soak test under buffer sizes 64, 128, and 256 frames with varispeed, 3-band EQ, DJ filters, Ping-Pong Delay and Reverb FX slots, Limiter in `tests/audio/test_audio_graph.cpp`. 0 xruns, 0 dropouts, CPU load well under real-time budget. dep: P3-07, P4-01
+- [x] P4-05 Mixer expansion + master/cue routing for 4 channels. Verified 2026-10-08: `Mixer` 4-channel summing, PFL cue bus routing, and `CueRouter` multichannel (1-4) / split-cue (1-2) headphone and master distribution. Unit tests in `tests/audio/test_audio_graph.cpp`. dep: P4-01
+
+## Phase 5 — Stems (§32–§44, §74)
+
+- [x] P5-02 [MVP1] Spike ADR-0006: run `StemSplitio/htdemucs-onnx` (STFT in graph) through ONNX Runtime CUDA EP in C++; parity vs Python reference (SI-SDR/max-abs), chunk-seam quality, fp16 vs fp32, RTF and peak VRAM on one 3090; fall back to LibTorch / `demucs.cpp` / sidecar only if it fails. Also try FT (HQ) and 6S (extended). Verified 2026-10-08: ADR-0006 accepted (Conv-STFT in graph evaluated vs Python demucs 4.1.0 on CUDA; max-abs error 0.001870, mean abs error 0.000243, SDR drums 55.3 dB / vocals 33.5 dB; Hann overlap-add partition-of-unity 1.0000; RTF = 0.034 / ~30x faster than real-time on RTX 3090 with 633.3 MB peak VRAM per chunk). dep: P5-01
+- [x] P5-03 [MVP1] `DemucsStemSeparator` on CUDA with golden-output regression test vs Python reference (§32). Verified 2026-10-08: unit tests in `tests/stems/test_demucs_separator.cpp` (`DemucsStemSeparator` fixed 343 980 segment chunking, symmetric half-sample Hann overlap-add partition-of-unity 1.0000, mean/std normalisation and scaling, multi-chunk progress callbacks, slot reordering drums/bass/other/vocals to ZYRON StemSlot, zero-padding and error handling). dep: P5-02
+- [x] P5-04 GPU manager: GPU/VRAM/CUDA/compute-capability discovery, scheduler across GPU0/GPU1 with VRAM budget and **priority classes** (interactive jobs prefer GPU A, background library work GPU B; policy, not hard-wired) (§35, §36, §41). Verified 2026-10-08: unit tests in `tests/ai/test_gpu_scheduler.cpp` (`CudaBackend` dynamic NVML probe, dual-device enumeration, fp16 support, compute capability query; `GpuScheduler` multi-GPU worker thread pools, priority routing Interactive->GPU 0 and Background->GPU 1, dynamic spillover, VRAM headroom budgeting, cooperative cancellation, CPU fallback worker). dep: P5-03
+- [x] P5-05 [MVP1] Stem cache keyed by content hash + model + version (§42, ADR-0007). Verified 2026-10-08: unit tests in `tests/stems/test_stem_cache.cpp` (binary .zyst format with ZYST header, metadata serialization, atomic rename, corrupt payload recovery, model/version cache key invalidation, cache size tracking). dep: P5-03, P3-01
+- [x] P5-07 [MVP1] Cross-track stem routing (§44): map any stem of any deck to any mixer channel (0..3) with split-cue presets. Verified 2026-10-08: unit tests in `tests/audio/test_stem_router.cpp`.
+- [x] P5-08 Model Manager UI + manifest/verify (§74, §73, ADR-0013): offline model verification, SHA-256 hash checks, non-commercial license warnings, import/delete workflows. Verified 2026-10-08: unit tests in `tests/ai/test_model_manager.cpp` and `tests/ui/test_model_manager_view.cpp`.
+- [x] P5-09 Background queue UI: progress, cancel, priorities; load-without-cache UX (SPEC gap #9). Verified 2026-10-08: unit tests in `tests/ai/test_background_queue.cpp` and `tests/ui/test_background_queue_view.cpp` (`IBackgroundQueueManager` abstraction, `BackgroundQueueManager` bridging to `GpuScheduler`, interactive vs background priority tracking, per-job progress callbacks, cooperative task cancellation, finished task cleanup; `BackgroundQueueComponent` 10 Hz real-time animated progress bars and device inspection). dep: P5-04
+- [ ] P5-10 Metal/MPS backend (Apple Silicon) (§38); CPU path verified on macOS Intel (§38–§40). dep: P5-04
+
+## Phase 6 — AI analysis (§53, §54)
+
+- [ ] P6-01 Track structure: intro/build/drop/break/drop2/outro segmentation (§54). dep: P3-10
+- [ ] P6-02 Energy v2 (loudness, spectral density, drum/bass/vocal density, drop intensity) (§53). dep: P5-05
+- [ ] P6-03 Intro/outro/mix-point markers persisted as cues of type Intro/Outro/Drop/Break. dep: P6-01
+- [ ] P6-04 Chord/harmony analysis via **ChordMini ONNX** (CQT per `cqt-plan.bin`) → harmonic compatibility input. dep: P3-13
+- [ ] P6-05 Optional embeddings (MERT / MuQ / CLAP) as default-off plug-ins under ADR-0013 (NC licences): track similarity + text search. dep: P5-08
+
+## Phase 7 — AI assistant (§52, §55, §56, §84)
+
+- [ ] P7-01 Compatibility scoring (BPM window, Camelot, energy, genre, structure) + explanation. dep: P6-01
+- [ ] P7-02 Next-track recommendation panel (§52). dep: P7-01
+- [ ] P7-03 Set Builder (60-min set → ordered tracks) + energy-curve target and chart (§55, §56). dep: P7-01
+- [ ] P7-04 Semantic/AI search (§30). dep: P7-01
+
+## Phase 8 — AI DJ (§57–§60, §51)
+
+- [ ] P8-01 Command timeline scheduler (beat-quantised), user-override-wins rule (ARCHITECTURE §5). dep: P3-06, P1-08
+- [ ] P8-02 Transition planner v1 (rule-based): start/duration, EQ/bass-swap, stem mutes, filter, volume (§57). dep: P8-01, P6-03
+- [ ] P8-03 Autonomous loop: select → load → sync → stems → transition → repeat; parameters Genre/Duration/Energy/BPM/Style (§58). dep: P8-02, P7-03
+- [ ] P8-04 Local LLM adapter: natural-language → validated Command/plan JSON only (§59, §60). dep: P8-01
+- [ ] P8-05 Safety: rate limits, dry-run mode, kill switch, audit log of AI commands (§76). dep: P8-03
+
+## Phase 9 — Controllers (§47–§49)
+
+- [ ] P9-01 MIDI in/out, device list, hot-plug (§47). dep: P1-08
+- [ ] P9-02 Mapping file format (JSON, versioned) → Command names; CC/Note/Pitch Bend (§47). dep: P9-01
+- [ ] P9-03 MIDI Learn via right-click context (§48). dep: P9-02, P3-12
+- [ ] P9-04 HID layer + controller profiles (§49). dep: P9-02
+
+## Phase 10 — Release engineering (§72, §73) *(added; not in the original roadmap)*
+
+- [ ] P10-01 CPack: Windows MSI/exe, macOS .app/.dmg (sign/notarize), Linux AppImage/.deb. dep: P1-06
+- [ ] P10-02 First-run flow: model download/import/verify, offline models folder (§73). dep: P5-08
+- [ ] P10-03 Update check (the only other network use, §75). dep: P10-01
+
+## MVP gates
+
+- **MVP 1 (§82):** all `[MVP1]` tasks.
+- **MVP 2 (§83):** Phase 4 + P3-07 keylock + P3-09 loops/hot cues + P3-10 key detection + P2-07 recording + Phase 9 (MIDI).
+- **MVP 3 (§84):** P7-01…P7-03 (+ compatibility, energy curve).
