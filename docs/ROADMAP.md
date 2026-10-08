@@ -104,10 +104,10 @@ Legend: `⛔` needs an owner decision (see `DECISIONS.md`) · `dep:` task depend
 
 ## Phase 9 — Controllers (§47–§49)
 
-- [ ] P9-01 MIDI in/out, device list, hot-plug (§47). dep: P1-08
-- [ ] P9-02 Mapping file format (JSON, versioned) → Command names; CC/Note/Pitch Bend (§47). dep: P9-01
-- [ ] P9-03 MIDI Learn via right-click context (§48). dep: P9-02, P3-12
-- [ ] P9-04 HID layer + controller profiles (§49). dep: P9-02
+- [x] P9-01 MIDI in/out, device list, hot-plug (§47). Verified 2026-10-08: `MidiDeviceManager` in `src/MIDI/` and `src/Core/MIDI/MidiTypes.hpp` provides input/output device enumeration, hotplug refresh, dynamic opening/closing of ports, and thread-safe dispatch of incoming/outgoing MIDI events. Unit tests in `tests/midi/test_midi_device_manager.cpp`. dep: P1-08
+- [x] P9-02 Mapping file format (JSON, versioned) → Command names; CC/Note/Pitch Bend (§47). Verified 2026-10-08: `MidiMapper` in `src/MIDI/` implements versioned JSON mapping profiles (import/export), translating NoteOn, NoteOff, ControlChange, and PitchBend to typed ZYRON commands (`DeckPlayPause`, `DeckCue`, `MixerCrossfader`, `MixerChannelVolume`, `DeckStemVolume`, etc.) with inversion and deadzone controls. Unit tests in `tests/midi/test_midi_mapper.cpp`. dep: P9-01
+- [x] P9-03 MIDI Learn via right-click context (§48). Verified 2026-10-08: `MidiLearnManager` in `src/MIDI/` provides interactive MIDI learn sessions, capturing incoming hardware events, binding to target commands/parameters, resolving conflicts, and updating `MidiMapper` profiles. Unit tests in `tests/midi/test_midi_learn.cpp`. dep: P9-02, P3-12
+- [x] P9-04 HID layer + controller profiles (§49). Verified 2026-10-08: `HidManager` in `src/MIDI/` and `src/Core/MIDI/HidTypes.hpp` processes raw HID device reports and translates axes/buttons to typed commands, with built-in profiles for RadioMaster Boxer and standard Gamepads. Unit tests in `tests/midi/test_hid_manager.cpp`. dep: P9-02
 
 ## Phase 10 — Release engineering (§72, §73) *(added; not in the original roadmap)*
 

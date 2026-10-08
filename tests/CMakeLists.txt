@@ -131,6 +131,13 @@ zyron_add_test_executable(zyron_ui_tests
   ui/test_ai_assistant_views.cpp)
 target_link_libraries(zyron_ui_tests PRIVATE zyron::ui)
 
+zyron_add_test_executable(zyron_midi_tests
+  midi/test_midi_device_manager.cpp
+  midi/test_midi_mapper.cpp
+  midi/test_midi_learn.cpp
+  midi/test_hid_manager.cpp)
+target_link_libraries(zyron_midi_tests PRIVATE zyron::midi zyron::core)
+
 zyron_add_test_executable(zyron_mvp1_gate_tests
   integration/test_mvp1_gate.cpp)
 target_link_libraries(zyron_mvp1_gate_tests PRIVATE

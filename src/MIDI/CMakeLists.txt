@@ -3,7 +3,11 @@
 # zyron_midi: MIDI I/O, mapping and MIDI Learn (ROADMAP Phase 9). It speaks to the rest of the app only through the
 # Command API. For now this holds the device probe.
 add_library(zyron_midi STATIC
-  JuceMidiProbe.cpp)
+  JuceMidiProbe.cpp
+  MidiDeviceManager.cpp
+  MidiMapper.cpp
+  MidiLearnManager.cpp
+  HidManager.cpp)
 add_library(zyron::midi ALIAS zyron_midi)
 
 target_include_directories(zyron_midi PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/..")
