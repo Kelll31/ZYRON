@@ -2,6 +2,8 @@
 #pragma once
 
 #include <atomic>
+#include <cstdint>
+#include <chrono>
 #include <condition_variable>
 #include <deque>
 #include <filesystem>
@@ -35,7 +37,12 @@ struct TrackLoadResult {
 ///  - Deferred freeing of previous TrackBuffers on the loader thread (never in realtime callback!).
 class TrackLoader {
  public:
+  static constexpr std::chrono::milliseconds kRetireGrace{1000};
+
   using CompletionCallback = std::function<void(const TrackLoadResult&)>;
+  /// Decodes a compressed or non-WAV format. Called on the loader's worker thread only after the built-in WAV
+  /// decoder declined the file. Returns nullptr (and fills the error) on failure.
+  using DecodeFunction = std::function<std::shared_ptr<TrackBuffer>(const std::filesystem::path&, std::string*)>;
 
   TrackLoader();
   ~TrackLoader();
@@ -48,6 +55,9 @@ class TrackLoader {
 
   /// Stops the worker thread and drains tasks.
   void stop();
+
+  /// Installs the decoder for formats the built-in WAV reader does not handle (MP3, FLAC, ...). Thread-safe.
+  void setFallbackDecoder(DecodeFunction decoder);
 
   /// Synchronously decodes a file into a TrackBuffer on the calling thread.
   [[nodiscard]] std::shared_ptr<TrackBuffer> decodeFile(const std::filesystem::path& path,
@@ -63,8 +73,21 @@ class TrackLoader {
   /// Unloads a track from DeckPlayer with deferred retirement of the buffer.
   void unloadTrack(core::DeckId deck, DeckPlayer& player);
 
+  /// Hands a buffer that the audio thread may still be reading to the deferred-retirement list (freed after
+  /// kRetireGrace, on the worker thread).
+  void retire(std::shared_ptr<const TrackBuffer> buffer);
+
   /// Purges retired track buffers on this thread (called by worker or manually).
   void purgeRetiredBuffers() noexcept;
+
+  /// Frees only buffers retired at least `kRetireGrace` ago: the audio thread may still be inside a block that
+  /// started before the hand-off, holding the old raw pointer.
+  void purgeExpiredBuffers() noexcept;
+
+  /// Counter the audio callback increments. When set, a retired buffer is freed only after the callback has run at
+  /// least kRetireCallbacks more times (a block that held the old pointer has certainly ended) on top of the time grace.
+  void setClock(const std::atomic<std::uint64_t>* callbackCounter) noexcept { clock_ = callbackCounter; }
+  static constexpr std::uint64_t kRetireCallbacks = 8;
 
   /// Number of currently retired buffers awaiting cleanup.
   [[nodiscard]] std::size_t retiredBuffersCount() const noexcept;
@@ -79,7 +102,10 @@ class TrackLoader {
 
   void workerLoop();
   void retireBuffer(std::shared_ptr<const TrackBuffer> buffer);
+  void retireReleased(DeckPlayer::Released released);
 
+  std::mutex decoderMutex_;
+  DecodeFunction fallbackDecoder_;
   std::thread workerThread_;
   std::mutex queueMutex_;
   std::condition_variable queueCv_;
@@ -88,7 +114,13 @@ class TrackLoader {
 
   // Deferred buffer retirement list (cleaned up on worker thread)
   std::mutex retiredMutex_;
-  std::vector<std::shared_ptr<const TrackBuffer>> retiredBuffers_;
+  struct RetiredBuffer {
+    std::chrono::steady_clock::time_point retiredAt;
+    std::uint64_t callbackAt{0};
+    std::shared_ptr<const TrackBuffer> buffer;
+  };
+  std::vector<RetiredBuffer> retiredBuffers_;
+  const std::atomic<std::uint64_t>* clock_{nullptr};
 };
 
 }  // namespace zyron::audio

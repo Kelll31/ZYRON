@@ -290,3 +290,55 @@ TEST_CASE("CommandBridge translates stem commands to realtime messages", "[audio
   REQUIRE(bridge.popMessage(popped));
   CHECK(popped.type == RtMessageType::DeckStemCue);
 }
+
+#include "Audio/Engine/AudioGraph.hpp"
+#include "Core/Commands/Command.hpp"
+
+TEST_CASE("AudioGraph: stem mute and volume commands reach a deck playing its stems", "[audio][stems][graph]") {
+  const auto rmsOf = [](const std::vector<float>& v) {
+    double sum = 0.0;
+    for (const float x : v) sum += static_cast<double>(x) * x;
+    return std::sqrt(sum / static_cast<double>(v.size()));
+  };
+  for (const double speed : {1.0, 1.05}) {  // 1.05: the keylock stretcher is in the path
+    INFO("speed " << speed);
+    AudioGraph graph;
+    graph.prepare(kRate);
+    auto& deck = graph.deck(DeckId::A);
+    deck.loadTrack(makeSineStem(440.0F, 0.4F, 6.0, kRate));
+    deck.loadStems({makeSineStem(300.0F, 0.2F, 6.0, kRate), makeSineStem(500.0F, 0.2F, 6.0, kRate),
+                    makeSineStem(80.0F, 0.2F, 6.0, kRate), makeSineStem(1200.0F, 0.2F, 6.0, kRate)});
+    deck.setPlaybackSpeed(speed);
+    deck.play();
+    graph.mixer().setCrossfader(-1.0F);
+
+    constexpr int kBlock = 256;
+    std::vector<float> left(kBlock), right(kBlock);
+    float* out[2] = {left.data(), right.data()};
+    const auto renderFor = [&](double seconds) {
+      std::vector<float> all;
+      for (int b = 0; b < static_cast<int>(seconds * kRate / kBlock); ++b) {
+        graph.render(out, 2, kBlock);
+        all.insert(all.end(), left.begin(), left.end());
+      }
+      return all;
+    };
+    const double before = rmsOf(renderFor(0.5));
+    REQUIRE(before > 0.05);
+
+    for (const StemKind stem : {StemKind::Vocals, StemKind::Drums, StemKind::Bass, StemKind::Other}) {
+      REQUIRE(graph.bridge().pushCommand(SetStemMute{DeckId::A, stem, true}));
+    }
+    (void)renderFor(0.3);
+    CHECK(rmsOf(renderFor(0.3)) < 0.01);  // all four muted: silence
+
+    for (const StemKind stem : {StemKind::Vocals, StemKind::Drums, StemKind::Bass, StemKind::Other}) {
+      REQUIRE(graph.bridge().pushCommand(SetStemMute{DeckId::A, stem, false}));
+      REQUIRE(graph.bridge().pushCommand(SetStemVolume{DeckId::A, stem, 0.25F}));
+    }
+    (void)renderFor(0.3);
+    const double quieter = rmsOf(renderFor(0.3));
+    CHECK(quieter < before * 0.5);
+    CHECK(quieter > 0.01);
+  }
+}

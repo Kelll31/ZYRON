@@ -95,11 +95,16 @@ class AudioGraph {
     return masterTap_.load(std::memory_order_acquire);
   }
 
+  /// Test hook: stretcher restarts that happened in the last / any 4096-frame chunk (the budget keeps them at <= 1).
+  [[nodiscard]] int lastBlockPrimes() const noexcept { return lastBlockPrimes_.load(std::memory_order_relaxed); }
+  [[nodiscard]] int maxBlockPrimes() const noexcept { return maxBlockPrimes_.load(std::memory_order_relaxed); }
+
   /// Realtime rendering callback. Overwrites output channels (up to 4 channels: Master L/R, Cue L/R).
   /// Strictly realtime safe: zero memory allocations, zero locks, zero exceptions.
   void render(float* const* outputs, int numChannels, int numSamples) noexcept;
 
  private:
+  void resetAudioState() noexcept;  // everything except the command queue
   void drainMessages() noexcept;
   void updateTelemetry() noexcept;
 
@@ -113,6 +118,16 @@ class AudioGraph {
   SyncManager syncManager_;
   CommandBridge bridge_;
   std::atomic<core::IAudioTap*> masterTap_{nullptr};
+  /// A synced start waiting for its Play (DeckPhaseLock message). Audio thread only. The grids travel in the message, so
+  /// the audio thread never reads state another thread writes; `track` ties it to the track it was made for.
+  struct PendingPhaseLock {
+    bool armed{false};
+    std::size_t master{0};
+    DeckGrid target;
+    DeckGrid masterGrid;
+    const TrackBuffer* track{nullptr};
+  };
+  std::array<PendingPhaseLock, core::kDeckCount> pendingLock_{};
 
   // Preallocated planar scratch buffers for RT rendering (zero heap allocations)
   // 4 decks * 2 channels (L, R)
@@ -122,6 +137,9 @@ class AudioGraph {
   std::array<float, kMaxBlockSize> cueL_{};
   std::array<float, kMaxBlockSize> cueR_{};
 
+  std::size_t primeTurn_{0};  // deck that is offered the stretcher-prime budget first in the next block
+  std::atomic<int> lastBlockPrimes_{0};
+  std::atomic<int> maxBlockPrimes_{0};
   std::atomic<std::uint64_t> callbackCount_{0};
 };
 

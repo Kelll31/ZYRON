@@ -22,6 +22,7 @@ core::TrackItem toTrackItem(const TrackRecord& rec) {
   item.bpm = rec.bpm;
   item.key = rec.key;
   item.energy = rec.energy;
+  item.loudnessLufs = rec.loudnessLufs;
   item.durationSec = rec.durationSec;
   item.waveformPeaksPath = rec.waveformPeaksPath;
   item.stemStatus = rec.stemStatus;

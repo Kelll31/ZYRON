@@ -5,7 +5,9 @@
 
 #include <functional>
 #include <optional>
+#include <vector>
 
+#include "Core/AI/AutonomousDjTypes.hpp"
 #include "Core/Audio/DeckTelemetry.hpp"
 #include "Core/Audio/WaveformData.hpp"
 #include "UI/Theme.hpp"
@@ -38,6 +40,9 @@ class WaveformView : public juce::Component {
   void setWaveformData(core::WaveformData data);
   void updateTelemetry(const core::DeckTelemetry& telemetry);
   void setZoomSeconds(double zoomSec);
+  /// Where the next (or running) Automix transition mixes, loops and drops on this track (track seconds). Empty clears
+  /// the overlay. Drawn as translucent bands, like the loop region.
+  void setTransitionRegions(const std::vector<core::TransitionRegion>& regions);
 
   // User interaction callbacks
   std::function<void(double seekSeconds)> onSeekRequested;
@@ -54,6 +59,9 @@ class WaveformView : public juce::Component {
   void renderOverviewCache();
   void paintOverview(juce::Graphics& g, juce::Rectangle<int> bounds);
   void paintDetail(juce::Graphics& g, juce::Rectangle<int> bounds);
+  /// Draws one region between x1 and x2 (pixels) over [top, top + height); `labelY` is where its label starts.
+  void paintTransitionRegion(juce::Graphics& g, const core::TransitionRegion& region, float x1, float x2, float top,
+                             float height, float labelY, float fontSize) const;
 
   [[nodiscard]] juce::Colour calculateBandColour(float low, float mid, float high) const;
 
@@ -61,6 +69,7 @@ class WaveformView : public juce::Component {
   Mode mode_{Mode::Both};
   core::WaveformData waveformData_;
   core::DeckTelemetry telemetry_;
+  std::vector<core::TransitionRegion> transitionRegions_;
 
   double zoomSeconds_{8.0};  // Total visible seconds in detail window (e.g. 8.0s)
   juce::Image overviewCacheImage_;

@@ -20,6 +20,13 @@ void CueRouter::prepare(double sampleRate) noexcept {
 void CueRouter::reset() noexcept {
   currentVolume_ = targetVolume_.load(std::memory_order_relaxed);
   currentMix_ = targetMix_.load(std::memory_order_relaxed);
+  delayL_.fill(0.0F);
+  delayR_.fill(0.0F);
+  delayWrite_ = 0;
+}
+
+void CueRouter::setCueDelaySamples(int samples) noexcept {
+  cueDelay_ = std::clamp(samples, 0, kMaxCueDelay);
 }
 
 void CueRouter::setMode(HeadphoneRoutingMode mode) noexcept {
@@ -71,8 +78,12 @@ void CueRouter::route(const float* masterL, const float* masterR, const float* c
 
     const float mL = (masterL != nullptr) ? masterL[i] : 0.0F;
     const float mR = (masterR != nullptr) ? masterR[i] : 0.0F;
-    const float cL = (cueL != nullptr) ? cueL[i] : 0.0F;
-    const float cR = (cueR != nullptr) ? cueR[i] : 0.0F;
+    delayL_[delayWrite_] = (cueL != nullptr) ? cueL[i] : 0.0F;
+    delayR_[delayWrite_] = (cueR != nullptr) ? cueR[i] : 0.0F;
+    const std::size_t readAt = (delayWrite_ + kDelayRing - static_cast<std::size_t>(cueDelay_)) & (kDelayRing - 1);
+    delayWrite_ = (delayWrite_ + 1) & (kDelayRing - 1);
+    const float cL = delayL_[readAt];
+    const float cR = delayR_[readAt];
 
     if (activeMode == HeadphoneRoutingMode::SplitCue) {
       // Split-cue fallback for 2-channel cards: Left = Cue mono, Right = Master mono

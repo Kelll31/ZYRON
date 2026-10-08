@@ -114,8 +114,11 @@ std::int64_t SyncManager::alignPhase(DeckPlayer& targetPlayer,
   const auto tIdx = core::index(targetDeck);
   if (mIdx >= core::kDeckCount || tIdx >= core::kDeckCount) return 0;
 
-  const auto& masterGrid = grids_[mIdx];
-  const auto& targetGrid = grids_[tIdx];
+  return alignPhaseWith(targetPlayer, grids_[tIdx], masterPlayer, grids_[mIdx]);
+}
+
+std::int64_t SyncManager::alignPhaseWith(DeckPlayer& targetPlayer, const DeckGrid& targetGrid,
+                                         const DeckPlayer& masterPlayer, const DeckGrid& masterGrid) noexcept {
   const double spbTarget = targetGrid.samplesPerBeat();
   if (spbTarget <= 0.0) return 0;
 
@@ -127,7 +130,12 @@ std::int64_t SyncManager::alignPhase(DeckPlayer& targetPlayer,
   while (diff > 0.5) diff -= 1.0;
   while (diff < -0.5) diff += 1.0;
 
-  const auto adjustmentSamples = static_cast<std::int64_t>(std::round(-diff * spbTarget));
+  auto adjustmentSamples = static_cast<std::int64_t>(std::round(-diff * spbTarget));
+  // Near the start of the track a step back would be cut off at frame 0 and leave the beats misaligned: move a whole
+  // beat forward instead, which lands on the same phase.
+  if (targetPlayer.currentFrame() + adjustmentSamples < 0) {
+    adjustmentSamples += static_cast<std::int64_t>(std::round(spbTarget));
+  }
   const auto newFrame = std::max<std::int64_t>(0, targetPlayer.currentFrame() + adjustmentSamples);
 
   targetPlayer.seek(newFrame);

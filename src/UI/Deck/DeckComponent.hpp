@@ -8,9 +8,12 @@
 #include <string>
 
 #include "Core/Audio/DeckTelemetry.hpp"
+#include "Core/Audio/EngineView.hpp"
 #include "Core/Audio/WaveformData.hpp"
 #include "Core/Library/LibraryTypes.hpp"
+#include "Core/State/AppState.hpp"
 #include "Core/State/Ids.hpp"
+#include "UI/ParamSlider.hpp"
 #include "UI/Theme.hpp"
 #include "UI/Waveform/WaveformView.hpp"
 
@@ -28,13 +31,30 @@ class DeckComponent : public juce::Component {
   void setTheme(const Theme& theme);
   void setTrack(const core::TrackItem& track, core::WaveformData waveform = {});
   void setWaveformData(core::WaveformData waveform);
+  /// Refreshes the title, BPM and key labels (e.g. after background analysis) without touching the waveform.
+  void updateTrackInfo(const core::TrackItem& track);
+  /// Shows how the neural stem separation of the loaded track is doing (the SPLIT button).
+  void setStemStatus(core::StemPhase phase, float progress, const std::string& message);
   void updateTelemetry(const core::DeckTelemetry& telemetry);
+  /// Automix transition regions of the loaded track, drawn on the detail waveform (empty clears them).
+  void setTransitionRegions(const std::vector<core::TransitionRegion>& regions) {
+    waveformView_.setTransitionRegions(regions);
+  }
+
+  /// Mirrors the stem faders and mutes from the engine's state (Automix mutes and brings stems in during a mix).
+  void syncFromState(const core::DeckState& state);
 
   // User Action Callbacks
   std::function<void(core::DeckId deck)> onPlayClicked;
   std::function<void(core::DeckId deck)> onPauseClicked;
   std::function<void(core::DeckId deck)> onCueClicked;
   std::function<void(core::DeckId deck)> onSyncClicked;
+  std::function<void(core::DeckId deck)> onSeparateStemsClicked;
+  /// Add a marker of `type` (core::TrackMarker::k... names) at the playhead.
+  std::function<void(core::DeckId deck, const std::string& type)> onMarkerAddRequested;
+  std::function<void(core::DeckId deck)> onMarkerRemoveNearestRequested;
+  /// A scratch picked from the SCR menu; the owner turns it into a Command (it knows the tempo).
+  std::function<void(core::DeckId deck, core::ScratchPattern pattern, double beats)> onScratchRequested;
   std::function<void(core::DeckId deck, double seekSec)> onSeekRequested;
   std::function<void(core::DeckId deck, int cueIndex)> onHotCueClicked;
   std::function<void(core::DeckId deck)> onLoopInClicked;
@@ -43,6 +63,10 @@ class DeckComponent : public juce::Component {
   std::function<void(core::DeckId deck, double beats)> onBeatLoopClicked;
   std::function<void(core::DeckId deck, double speedRatio)> onPitchChanged;
   std::function<void(core::DeckId deck, float gainDb)> onGainChanged;
+  std::function<void(core::DeckId deck, bool enabled)> onKeylockChanged;
+  std::function<void(core::DeckId deck, float semitones)> onKeyShiftChanged;
+  /// The FX button was pressed: the owner shows the deck's effect slots next to `target`.
+  std::function<void(core::DeckId deck, juce::Component& target)> onFxButtonClicked;
   std::function<void(core::DeckId deck, int stemIndex, float volume)> onStemVolumeChanged;
   std::function<void(core::DeckId deck, int stemIndex, bool muted)> onStemMuteChanged;
 
@@ -53,11 +77,16 @@ class DeckComponent : public juce::Component {
 
  private:
   void setupHeader();
+  void showMarkerMenu();
+  void showScratchMenu();
   void setupTransport();
   void setupLoops();
   void setupHotCues();
   void setupStems();
   void setupPitchFader();
+  void setupKeyRow();
+  void nudgeKeyShift(float semitones);
+  void refreshKeyDisplay();
   void updateTimeLabels(double currentSec, double durationSec);
 
   core::DeckId deckId_;
@@ -71,6 +100,9 @@ class DeckComponent : public juce::Component {
   juce::Label artistLabel_;
   juce::Label bpmLabel_;
   juce::Label keyLabel_;
+  juce::TextButton splitButton_{"SPLIT"};
+  juce::TextButton markButton_{TRANS("MARK")};
+  juce::TextButton scratchButton_{TRANS("SCR")};
   juce::Label timeElapsedLabel_;
   juce::Label timeRemainingLabel_;
 
@@ -81,7 +113,7 @@ class DeckComponent : public juce::Component {
   static constexpr int kNumStems = 4;
   std::array<juce::TextButton, kNumStems> stemMuteButtons_{
       juce::TextButton{"VOC"}, juce::TextButton{"DRUM"}, juce::TextButton{"BASS"}, juce::TextButton{"OTHER"}};
-  std::array<juce::Slider, kNumStems> stemVolumeSliders_{};
+  std::array<ParamSlider, kNumStems> stemVolumeSliders_{};
 
   // Hot Cues 1..8 (SPEC §25)
   static constexpr int kNumCues = 8;
@@ -103,8 +135,19 @@ class DeckComponent : public juce::Component {
   juce::TextButton playButton_{"PLAY"};
   juce::TextButton syncButton_{"SYNC"};
 
+  // Key row: keylock, key shift in semitones, the key that is heard, the FX slots
+  juce::TextButton keylockButton_{"KEYLOCK"};
+  juce::TextButton keyShiftMinus_{"-"};
+  juce::TextButton keyShiftValue_;
+  juce::TextButton keyShiftPlus_{"+"};
+  juce::Label effectiveKeyLabel_;
+  juce::Label stemsStatusLabel_;  // over the stem faders while the deck has no stems yet: why they do nothing
+  juce::TextButton fxButton_{"FX"};
+  float keyShift_{0.0F};
+  bool keylock_{true};
+
   // Pitch / Tempo Slider
-  juce::Slider pitchSlider_;
+  ParamSlider pitchSlider_;
   juce::Label pitchLabel_;
   juce::TextButton pitchBendPlus_{"+"};
   juce::TextButton pitchBendMinus_{"-"};

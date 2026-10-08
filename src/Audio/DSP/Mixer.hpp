@@ -6,6 +6,8 @@
 #include <cstddef>
 #include <cstdint>
 
+#include "Audio/DSP/FxHitPlayer.hpp"
+#include "Audio/DSP/GlueCompressor.hpp"
 #include "Audio/DSP/MasterLimiter.hpp"
 #include "Core/Audio/MixerTypes.hpp"
 
@@ -20,7 +22,7 @@ using core::CrossfaderAssign;
 ///  - 2 channels (MVP1), expandable to 4 channels (Phase 4)
 ///  - Crossfader curves: Linear, ConstantPower (default), Cut
 ///  - Smooth 5 ms crossfader ramping and 10 ms master gain ramping
-///  - Master limiter with lookahead and brickwall ceiling
+///  - Master bus chain: sum -> master gain -> non-finite guard -> FX hits -> glue compressor -> lookahead limiter (-0.3 dBFS)
 ///  - Realtime safe (zero allocations in audio render)
 class Mixer {
  public:
@@ -47,6 +49,16 @@ class Mixer {
   // Master Gain control
   void setMasterGainDb(float gainDb) noexcept;
   [[nodiscard]] float masterGainDb() const noexcept;
+
+  // Master bus chain: sum -> master gain -> NaN guard -> glue compressor -> limiter (both on by default)
+  [[nodiscard]] GlueCompressor& glueCompressor() noexcept { return glue_; }
+  [[nodiscard]] const GlueCompressor& glueCompressor() const noexcept { return glue_; }
+  void setMasterProcessing(bool glue, bool limiter) noexcept;
+
+  // Performance hits (air horn, siren, ...) are summed into the master bus after the master gain, before the glue.
+  // trigger() is for the audio thread (AudioGraph drains TriggerFxHit into it).
+  [[nodiscard]] FxHitPlayer& fxHits() noexcept { return fxHits_; }
+  [[nodiscard]] const FxHitPlayer& fxHits() const noexcept { return fxHits_; }
 
   // Master Limiter access
   [[nodiscard]] MasterLimiter& masterLimiter() noexcept { return masterLimiter_; }
@@ -96,6 +108,8 @@ class Mixer {
   std::atomic<float> masterPeakLeft_{0.0F};
   std::atomic<float> masterPeakRight_{0.0F};
 
+  FxHitPlayer fxHits_;
+  GlueCompressor glue_;
   MasterLimiter masterLimiter_;
 };
 

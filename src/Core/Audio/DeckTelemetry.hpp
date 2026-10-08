@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <vector>
 
 #include "Core/State/Ids.hpp"
 
@@ -46,6 +47,8 @@ struct DeckTelemetry {
   double playbackSpeed{1.0};
   LoopTelemetry loop;
   std::array<std::optional<CuePointTelemetry>, 8> hotCues{};
+  /// Track markers (mix in / mix out / drop / break ...): `index` is the marker id, `type` its kind.
+  std::vector<CuePointTelemetry> markers;
   BeatgridTelemetry beatgrid{};
   float vuLevelLeft{0.0f};
   float vuLevelRight{0.0f};

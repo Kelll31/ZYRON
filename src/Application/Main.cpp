@@ -10,16 +10,19 @@
 #include <memory>
 
 #include "AI/Backends/Cuda/NvmlGpuProbe.hpp"
+#include "Application/ApplicationComposition.hpp"
 #include "Audio/Engine/AudioEngine.hpp"
 #include "Audio/Routing/JuceAudioDeviceProbe.hpp"
 #include "Core/Commands/CommandBus.hpp"
 #include "Core/System/DynamicLibrary.hpp"
 #include "Core/System/EngineStats.hpp"
+#include "Core/System/FileSystem.hpp"
 #include "Core/System/HardwareInfo.hpp"
 #include "Core/System/HardwareProbe.hpp"
 #include "MIDI/JuceMidiProbe.hpp"
 #include "Platform/Common/JuceSystemProbe.hpp"
 #include "Platform/GpuLibraries.hpp"
+#include "UI/Localization.hpp"
 #include "UI/MainWindow.hpp"
 
 namespace {
@@ -77,9 +80,13 @@ class ZyronApplication final : public juce::JUCEApplication {
       return;
     }
 
-    engine_ = std::make_shared<zyron::audio::AudioEngine>();
-    bus_.addSink(engine_);
-    engine_->start(store_.snapshot()->audioOutput);
+    // The smoke test runs with a throw-away library: it must never touch (or race) the user's own one.
+    const std::filesystem::path dataDir = commandLine.contains("--smoke-test")
+                                              ? std::filesystem::temp_directory_path() / "zyron-smoke"
+                                              : zyron::core::createPlatformFileSystem()->appDataDir();
+    composition_ = std::make_unique<zyron::application::ApplicationComposition>(dataDir);
+    engine_ = composition_->engine();
+    engine_->start(composition_->store().snapshot()->audioOutput);
 
     // `--audio-selftest`: run the output path for a moment with an inaudible tone and report whether callbacks ran.
     if (commandLine.contains("--audio-selftest")) {
@@ -87,7 +94,13 @@ class ZyronApplication final : public juce::JUCEApplication {
       return;
     }
 
-    window_ = std::make_unique<zyron::ui::MainWindow>(getApplicationName(), bus_, *engine_);
+    if (composition_->library() != nullptr) {
+      composition_->library()->rescanKnownFolders();  // incremental: picks up files added since the last run
+    }
+    zyron::ui::i18n::apply(zyron::ui::i18n::loadSaved());
+    window_ = std::make_unique<zyron::ui::MainWindow>(getApplicationName(), composition_->bus(), *engine_,
+                                                      composition_->library(), engine_.get(), engine_.get(),
+                                                      composition_->automix());
     startHardwareDetection();
 
     // `--smoke-test`: open the window, run the message loop once, exit 0. Used to prove that the binary starts and
@@ -101,10 +114,10 @@ class ZyronApplication final : public juce::JUCEApplication {
     alive_->store(false);  // queued callbacks become no-ops
     window_.reset();
     if (engine_ != nullptr) {
-      bus_.removeSink(engine_);
       engine_->stop();
       engine_.reset();
     }
+    composition_.reset();
   }
 
   void systemRequestedQuit() override { quit(); }
@@ -112,7 +125,7 @@ class ZyronApplication final : public juce::JUCEApplication {
  private:
   void runAudioSelfTest() {
     const zyron::core::AudioEngineStats before = engine_->stats();
-    (void)bus_.submit(zyron::core::SetTestTone{true, 440.0F, kSelfTestToneDb}, kScriptOrigin);
+    (void)composition_->bus().submit(zyron::core::SetTestTone{true, 440.0F, kSelfTestToneDb}, kScriptOrigin);
 
     juce::Timer::callAfterDelay(kSelfTestMilliseconds, [this, before, alive = alive_] {
       if (!alive->load()) {
@@ -174,9 +187,7 @@ class ZyronApplication final : public juce::JUCEApplication {
     }
   }
 
-  zyron::core::StateStore store_;
-  zyron::core::EventBus events_;
-  zyron::core::CommandBus bus_{store_, events_};
+  std::unique_ptr<zyron::application::ApplicationComposition> composition_;
   std::shared_ptr<zyron::audio::AudioEngine> engine_;
   std::unique_ptr<zyron::ui::MainWindow> window_;
   HardwareReport report_;

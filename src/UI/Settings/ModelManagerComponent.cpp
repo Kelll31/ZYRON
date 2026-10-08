@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "UI/Settings/ModelManagerComponent.hpp"
+#include "UI/Localization.hpp"
 
 #include <iomanip>
 #include <sstream>
@@ -31,12 +32,12 @@ std::string formatSize(std::uint64_t bytes) {
 ModelManagerComponent::ModelManagerComponent(std::shared_ptr<core::IModelManager> modelManager,
                                              Theme theme)
     : modelManager_(std::move(modelManager)), theme_(theme) {
-  titleLabel_.setText("AI Model Manager (SPEC \xc2\xa7""74)", juce::dontSendNotification);
+  titleLabel_.setText(juce::String(TRANS("AI Model Manager")) + juce::String::fromUTF8(" (SPEC \xc2\xa7""74)"), juce::dontSendNotification);
   titleLabel_.setFont(juce::FontOptions{18.0F, juce::Font::bold});
   titleLabel_.setColour(juce::Label::textColourId, theme_.text);
   addAndMakeVisible(titleLabel_);
 
-  headerInfoLabel_.setText("Manage models for Stems, BPM, Key and Analysis. Permissive weights verified.",
+  headerInfoLabel_.setText(TRANS("Manage models for Stems, BPM, Key and Analysis. Permissive weights verified."),
                            juce::dontSendNotification);
   headerInfoLabel_.setFont(juce::FontOptions{12.0F});
   headerInfoLabel_.setColour(juce::Label::textColourId, theme_.textDim);
@@ -69,13 +70,13 @@ ModelManagerComponent::ModelManagerComponent(std::shared_ptr<core::IModelManager
   addAndMakeVisible(removeButton_);
 
   auto& header = table_.getHeader();
-  header.addColumn("Model", ColName, 200, 120, 300);
-  header.addColumn("Task", ColTask, 150, 100, 200);
-  header.addColumn("Ver", ColVersion, 60, 50, 80);
-  header.addColumn("License", ColLicense, 120, 80, 160);
-  header.addColumn("Size", ColSize, 85, 60, 120);
-  header.addColumn("Status", ColStatus, 110, 80, 150);
-  header.addColumn("Compatibility", ColBackends, 180, 100, 300);
+  header.addColumn(TRANS("Model"), ColName, 200, 120, 300);
+  header.addColumn(TRANS("Task"), ColTask, 150, 100, 200);
+  header.addColumn(TRANS("Ver"), ColVersion, 60, 50, 80);
+  header.addColumn(TRANS("License"), ColLicense, 120, 80, 160);
+  header.addColumn(TRANS("Size"), ColSize, 85, 60, 120);
+  header.addColumn(TRANS("Status"), ColStatus, 110, 80, 150);
+  header.addColumn(TRANS("Compatibility"), ColBackends, 180, 100, 300);
 
   table_.setModel(this);
   table_.setMultipleSelectionEnabled(false);
@@ -162,7 +163,7 @@ void ModelManagerComponent::paintCell(juce::Graphics& g, int rowNumber, int colu
 
     case ColTask:
       g.setColour(theme_.textDim);
-      g.drawText(std::string(core::modelTaskName(item.task)), cellBounds, juce::Justification::centredLeft, true);
+      g.drawText(i18n::translateMessage(core::modelTaskName(item.task)), cellBounds, juce::Justification::centredLeft, true);
       break;
 
     case ColVersion:
@@ -194,7 +195,7 @@ void ModelManagerComponent::paintCell(juce::Graphics& g, int rowNumber, int colu
         statusCol = theme_.meterRed;
       }
       g.setColour(statusCol);
-      g.drawText(std::string(core::modelInstallStatusName(item.status)), cellBounds,
+      g.drawText(i18n::translateMessage(core::modelInstallStatusName(item.status)), cellBounds,
                  juce::Justification::centredLeft, true);
       break;
     }

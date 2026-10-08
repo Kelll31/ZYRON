@@ -3,6 +3,8 @@
 
 #include <juce_gui_basics/juce_gui_basics.h>
 
+#include <chrono>
+#include <deque>
 #include <functional>
 #include <memory>
 #include <string>
@@ -28,7 +30,8 @@ class LibraryComponent : public juce::Component,
     ColEnergy,
     ColDuration,
     ColGenre,
-    ColPath
+    ColPath,
+    ColStatus
   };
 
   explicit LibraryComponent(std::shared_ptr<core::ILibrarySource> source,
@@ -37,10 +40,16 @@ class LibraryComponent : public juce::Component,
 
   void setTheme(const Theme& theme);
   void refreshTracks();
+  /// Reads the scanner's progress: shows it in the status line and reloads the table when tracks were added.
+  void updateScanStatus();
+  /// Shows the Load C / Load D buttons in 4-deck layout.
+  void setFourDecks(bool fourDecks);
 
   // Callbacks
   std::function<void(const core::TrackItem& track, core::DeckId deck)> onTrackLoadRequested;
   std::function<void(const std::string& folderPath)> onScanRequested;
+  /// "Play this next": mix the track in live (Automix on: as the next track at once).
+  std::function<void(const core::TrackItem& track)> onMixNextRequested;
 
   // TableListBoxModel overrides
   int getNumRows() override;
@@ -48,6 +57,7 @@ class LibraryComponent : public juce::Component,
   void paintCell(juce::Graphics& g, int rowNumber, int columnId, int width, int height, bool rowIsSelected) override;
   void cellDoubleClicked(int rowNumber, int columnId, const juce::MouseEvent& e) override;
   void sortOrderChanged(int newSortColumnId, bool isForwards) override;
+  void cellClicked(int rowNumber, int columnId, const juce::MouseEvent& e) override;
 
   // TextEditor::Listener overrides
   void textEditorTextChanged(juce::TextEditor& editor) override;
@@ -60,14 +70,20 @@ class LibraryComponent : public juce::Component,
   void filterTracks(const juce::String& query);
   void sortCurrentTracks();
   void loadSelectedTrackToDeck(core::DeckId deck);
+  void updateStatusText();
+  void showTrackMenu(int row);
+  void loadTrackToDeck(const core::TrackItem& track, core::DeckId deck);
 
   std::shared_ptr<core::ILibrarySource> source_;
   Theme theme_;
 
   juce::TextEditor searchBox_;
-  juce::TextButton scanButton_{"Scan Folder..."};
-  juce::TextButton loadDeckAButton_{"Load A"};
-  juce::TextButton loadDeckBButton_{"Load B"};
+  juce::TextButton scanButton_{TRANS("Scan Folder...")};
+  juce::TextButton loadDeckAButton_{TRANS("Load A")};
+  juce::TextButton loadDeckBButton_{TRANS("Load B")};
+  juce::TextButton mixNextButton_{TRANS("Mix next")};
+  juce::TextButton loadDeckCButton_{TRANS("Load C")};
+  juce::TextButton loadDeckDButton_{TRANS("Load D")};
   juce::Label statusLabel_;
 
   juce::TableListBox table_;
@@ -78,6 +94,14 @@ class LibraryComponent : public juce::Component,
   bool sortAscending_{true};
 
   std::unique_ptr<juce::FileChooser> fileChooser_;
+
+  struct PendingSample {
+    std::chrono::steady_clock::time_point at;
+    std::size_t pending;
+  };
+  std::deque<PendingSample> pendingHistory_;  // for the time-left estimate of the background analysis
+  core::LibraryScanStatus scan_;
+  bool fourDecks_{false};
 
   JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(LibraryComponent)
 };

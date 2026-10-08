@@ -70,7 +70,7 @@ class SetBuilderComponent : public juce::Component, public juce::TableListBoxMod
   juce::ComboBox durationCombo_;
   juce::Label genreLabel_;
   juce::TextEditor genreEditor_;
-  juce::TextButton buildButton_{"Generate 60-Min Set"};
+  juce::TextButton buildButton_{TRANS("Generate 60-Min Set")};
   juce::Label summaryLabel_;
 
   EnergyCurveChart chart_;

@@ -48,28 +48,28 @@ class FirstRunWizardComponent : public juce::Component, public juce::Button::Lis
 
   // Step 1: Welcome & Offline Policy
   juce::Label policyInfoLabel_;
-  juce::ToggleButton offlineOnlyButton_{"Air-gapped / Offline Only (Zero network usage)"};
-  juce::ToggleButton allowNetworkButton_{"Allow Network (Version check & model downloads only)"};
+  juce::ToggleButton offlineOnlyButton_{TRANS("Air-gapped / Offline Only (Zero network usage)")};
+  juce::ToggleButton allowNetworkButton_{TRANS("Allow Network (Version check & model downloads only)")};
 
   // Step 2: Model Storage
   juce::Label dirPromptLabel_;
   juce::Label dirCurrentLabel_;
-  juce::TextButton useDefaultDirButton_{"Use Default (./models)"};
-  juce::TextButton useCustomDirButton_{"Set Custom Directory..."};
+  juce::TextButton useDefaultDirButton_{TRANS("Use Default (./models)")};
+  juce::TextButton useCustomDirButton_{TRANS("Set Custom Directory...")};
 
   // Step 3: Model Verification
   juce::Label modelsHeaderLabel_;
-  juce::TextButton verifyModelsButton_{"Scan & Verify All Models"};
-  juce::TextButton downloadModelsButton_{"Download Missing (Online)"};
+  juce::TextButton verifyModelsButton_{TRANS("Scan & Verify All Models")};
+  juce::TextButton downloadModelsButton_{TRANS("Download Missing (Online)")};
   juce::Label modelStatusReportLabel_;
 
   // Step 4: Ready
   juce::Label completionMessageLabel_;
-  juce::TextButton launchAppButton_{"Launch ZYRON DJ"};
+  juce::TextButton launchAppButton_{TRANS("Launch ZYRON DJ")};
 
   // Navigation Buttons
-  juce::TextButton backButton_{"Back"};
-  juce::TextButton nextButton_{"Next"};
+  juce::TextButton backButton_{TRANS("Back")};
+  juce::TextButton nextButton_{TRANS("Next")};
 };
 
 }  // namespace zyron::ui

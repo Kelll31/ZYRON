@@ -10,12 +10,17 @@ add_library(zyron_analysis STATIC
   Features/Cqt.cpp
   Waveform/WaveformPeaks.cpp
   Bpm/BeatDetector.cpp
+  Bpm/BeatThisPipeline.cpp
   Bpm/Beatgrid.cpp
   Bpm/BeatgridEditor.cpp
   Key/MusicalKey.cpp
   Key/KeyDetector.cpp
   Energy/EnergyAnalyzer.cpp
   Structure/StructureSegmenter.cpp
+  Structure/MixPointFinder.cpp
+  Structure/BarProfile.cpp
+  Structure/VocalDetector.cpp
+  Loudness/LoudnessMeter.cpp
   Chord/ChordAnalyzer.cpp)
 add_library(zyron::analysis ALIAS zyron_analysis)
 

@@ -16,6 +16,7 @@ Owner writes in Russian → **reply in Russian**. Code, comments, identifiers, c
 | `docs/DECISIONS.md` | ADR log. **Check before picking any library or pattern.** Open ADRs need the owner. |
 | `docs/DEV_SETUP.md` | Toolchain per OS and what is/isn't installed on the owner's PC. |
 | `docs/AI_MODELS.md` | Candidate AI models (HF repos, sizes, licences, I/O contracts) with card-verified vs unverified status. Policy: ADR-0013. |
+| `docs/COMMERCIAL_STRATEGY.md` | Owner's go-to-market/pricing hypotheses (Free/Pro/Founders, funnel, KPIs). Not a spec; licensing blocker in §15. |
 
 Current status: **Phase 0 — planning scaffold only, no code yet.** Update ROADMAP checkboxes as work lands.
 

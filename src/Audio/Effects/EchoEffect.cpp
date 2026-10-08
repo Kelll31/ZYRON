@@ -2,6 +2,7 @@
 #include "Audio/Effects/EchoEffect.hpp"
 
 #include <algorithm>
+#include <bit>
 #include <cmath>
 
 namespace zyron::audio {
@@ -21,7 +22,8 @@ EchoEffect::EchoEffect() {
 void EchoEffect::prepare(double sampleRate, [[maybe_unused]] int maxBlockSize) noexcept {
   sampleRate_ = (sampleRate > 0.0) ? sampleRate : 48000.0;
 
-  const std::size_t capacity = 262144;  // Power of 2 (~5.4s at 48kHz, ~1.36s at 192kHz)
+  // Power of 2 that holds the longest echo (1.5 s) at this rate: 131072 frames at 48 kHz (1 MB for both channels).
+  const std::size_t capacity = std::bit_ceil(static_cast<std::size_t>(sampleRate_ * 1.55) + 8);
   bufferL_.assign(capacity, 0.0F);
   bufferR_.assign(capacity, 0.0F);
   bufferMask_ = static_cast<int>(capacity - 1);

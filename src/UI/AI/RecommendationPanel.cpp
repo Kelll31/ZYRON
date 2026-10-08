@@ -61,12 +61,12 @@ RecommendationPanel::RecommendationPanel()
 RecommendationPanel::RecommendationPanel(core::ITrackRecommender& recommender)
     : recommender_(&recommender) {
   // Header
-  headerLabel_.setText("AI NEXT-TRACK RECOMMENDATIONS", juce::dontSendNotification);
+  headerLabel_.setText(TRANS("AI NEXT-TRACK RECOMMENDATIONS"), juce::dontSendNotification);
   headerLabel_.setFont(juce::FontOptions(14.0f).withStyle("Bold"));
   headerLabel_.setColour(juce::Label::textColourId, theme_.accent);
   addAndMakeVisible(headerLabel_);
 
-  currentTrackLabel_.setText("Currently playing: None", juce::dontSendNotification);
+  currentTrackLabel_.setText(TRANS("Currently playing: None"), juce::dontSendNotification);
   currentTrackLabel_.setFont(juce::FontOptions(12.0f));
   currentTrackLabel_.setColour(juce::Label::textColourId, theme_.textDim);
   addAndMakeVisible(currentTrackLabel_);
@@ -79,10 +79,10 @@ RecommendationPanel::RecommendationPanel(core::ITrackRecommender& recommender)
   };
   addAndMakeVisible(harmonicOnlyToggle_);
 
-  energyGoalCombo_.addItem("Maintain Energy", 1);
-  energyGoalCombo_.addItem("Build Energy (+)", 2);
-  energyGoalCombo_.addItem("Cool Down (-)", 3);
-  energyGoalCombo_.addItem("Any Energy", 4);
+  energyGoalCombo_.addItem(TRANS("Maintain Energy"), 1);
+  energyGoalCombo_.addItem(TRANS("Build Energy (+)"), 2);
+  energyGoalCombo_.addItem(TRANS("Cool Down (-)"), 3);
+  energyGoalCombo_.addItem(TRANS("Any Energy"), 4);
   energyGoalCombo_.setSelectedId(1, juce::dontSendNotification);
   energyGoalCombo_.onChange = [this] {
     switch (energyGoalCombo_.getSelectedId()) {
@@ -104,7 +104,7 @@ RecommendationPanel::RecommendationPanel(core::ITrackRecommender& recommender)
   };
   addAndMakeVisible(pitchToleranceSlider_);
 
-  pitchToleranceLabel_.setText("Max Tempo Shift:", juce::dontSendNotification);
+  pitchToleranceLabel_.setText(TRANS("Max Tempo Shift:"), juce::dontSendNotification);
   pitchToleranceLabel_.setFont(juce::FontOptions(11.0f));
   pitchToleranceLabel_.setColour(juce::Label::textColourId, theme_.textDim);
   addAndMakeVisible(pitchToleranceLabel_);
@@ -117,14 +117,14 @@ RecommendationPanel::RecommendationPanel(core::ITrackRecommender& recommender)
   // Table
   auto& header = table_.getHeader();
   header.addColumn("#", ColRank, 32, 25, 45);
-  header.addColumn("Match", ColScore, 60, 50, 80);
-  header.addColumn("Artist", ColArtist, 120, 80, 200);
-  header.addColumn("Title", ColTitle, 160, 100, 300);
+  header.addColumn(TRANS("Match"), ColScore, 60, 50, 80);
+  header.addColumn(TRANS("Artist"), ColArtist, 120, 80, 200);
+  header.addColumn(TRANS("Title"), ColTitle, 160, 100, 300);
   header.addColumn("BPM", ColBpm, 55, 45, 75);
   header.addColumn("Key", ColKey, 50, 40, 70);
-  header.addColumn("Energy", ColEnergy, 55, 45, 75);
-  header.addColumn("Transition Rationale", ColReason, 240, 120, 500);
-  header.addColumn("Load to Deck", ColActions, 130, 100, 160);
+  header.addColumn(TRANS("Energy"), ColEnergy, 55, 45, 75);
+  header.addColumn(TRANS("Transition Rationale"), ColReason, 240, 120, 500);
+  header.addColumn(TRANS("Load to Deck"), ColActions, 130, 100, 160);
 
   table_.setModel(this);
   table_.setColour(juce::ListBox::backgroundColourId, theme_.background);
@@ -151,13 +151,16 @@ void RecommendationPanel::setCatalog(std::vector<core::TrackItem> catalog) {
 
 void RecommendationPanel::setCurrentTrack(const core::TrackItem& track) {
   currentTrack_ = track;
-  std::ostringstream ss;
-  ss << "Currently playing: " << (track.artist.empty() ? "Unknown" : track.artist) << " - "
-     << (track.title.empty() ? "Untitled" : track.title) << " ["
-     << std::fixed << std::setprecision(1) << track.bpm << " BPM, "
-     << (track.key.empty() ? "?" : track.key) << ", Energy "
-     << std::fixed << std::setprecision(1) << track.energy << "]";
-  currentTrackLabel_.setText(ss.str(), juce::dontSendNotification);
+  const juce::String artist = track.artist.empty() ? juce::String(TRANS("Unknown")) : juce::String(track.artist);
+  const juce::String title = track.title.empty() ? juce::String(TRANS("Untitled")) : juce::String(track.title);
+  const juce::String key = track.key.empty() ? juce::String("?") : juce::String(track.key);
+  currentTrackLabel_.setText(juce::String(TRANS("Currently playing: %a - %t [%b BPM, %k, Energy %e]"))
+                                 .replace("%a", artist)
+                                 .replace("%t", title)
+                                 .replace("%b", juce::String(track.bpm, 1))
+                                 .replace("%k", key)
+                                 .replace("%e", juce::String(track.energy, 1)),
+                             juce::dontSendNotification);
   refreshRecommendations();
 }
 

@@ -15,7 +15,8 @@ function(zyron_target_defaults target)
     # /Zc:__cplusplus makes __cplusplus report the real standard (MSVC says 199711 otherwise).
     target_compile_options(${target} PUBLIC /permissive- /utf-8 /Zc:__cplusplus)
     # /external:W0 keeps third-party (SYSTEM) headers such as JUCE's from tripping /W4.
-    set(_zyron_flags /W4 /external:W0)
+    # /w15038: members initialised out of declaration order (a moved-from argument read later is a silent bug).
+    set(_zyron_flags /W4 /external:W0 /w15038)
     if(ZYRON_WARNINGS_AS_ERRORS)
       list(APPEND _zyron_flags /WX)
     endif()

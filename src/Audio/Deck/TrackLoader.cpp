@@ -32,13 +32,39 @@ void TrackLoader::stop() {
   purgeRetiredBuffers();
 }
 
+void TrackLoader::setFallbackDecoder(DecodeFunction decoder) {
+  std::lock_guard<std::mutex> lock(decoderMutex_);
+  fallbackDecoder_ = std::move(decoder);
+}
+
 std::shared_ptr<TrackBuffer> TrackLoader::decodeFile(const std::filesystem::path& path, std::string* errorOut) {
   // Primary RIFF/WAVE decoder (SPEC section 27)
-  auto buffer = WavDecoder::decode(path, errorOut);
+  std::string wavError;
+  auto buffer = WavDecoder::decode(path, &wavError);
   if (buffer != nullptr) {
     return buffer;
   }
 
+  DecodeFunction fallback;
+  {
+    std::lock_guard<std::mutex> lock(decoderMutex_);
+    fallback = fallbackDecoder_;
+  }
+  if (fallback) {
+    std::string fallbackError;
+    buffer = fallback(path, &fallbackError);
+    if (buffer != nullptr) {
+      return buffer;
+    }
+    if (errorOut != nullptr) {
+      *errorOut = fallbackError;
+    }
+    return nullptr;
+  }
+
+  if (errorOut != nullptr) {
+    *errorOut = wavError;
+  }
   if (errorOut != nullptr && errorOut->empty()) {
     *errorOut = "Unsupported or unreadable audio format: " + path.extension().string();
   }
@@ -58,13 +84,8 @@ TrackLoadResult TrackLoader::loadTrackSync(core::DeckId deck, const std::filesys
     return result;
   }
 
-  // Atomic hand-off to DeckPlayer: capture previously active buffer for deferred retirement
-  auto oldBuffer = player.currentTrack();
-  player.loadTrack(newBuffer);
-
-  if (oldBuffer != nullptr) {
-    retireBuffer(std::move(oldBuffer));
-  }
+  // One atomic hand-off: what the deck gave up (old track and its stems) is retired, never freed under the audio thread.
+  retireReleased(player.loadTrack(newBuffer));
 
   result.success = true;
   result.buffer = std::move(newBuffer);
@@ -80,24 +101,53 @@ void TrackLoader::loadTrackAsync(core::DeckId deck, const std::filesystem::path&
   queueCv_.notify_one();
 }
 
+void TrackLoader::retire(std::shared_ptr<const TrackBuffer> buffer) {
+  retireBuffer(std::move(buffer));
+}
+
 void TrackLoader::unloadTrack(core::DeckId deck, DeckPlayer& player) {
   (void)deck;
-  auto oldBuffer = player.currentTrack();
-  player.unloadTrack();
+  retireReleased(player.unloadTrack());  // also unloads the stems
+}
 
-  if (oldBuffer != nullptr) {
-    retireBuffer(std::move(oldBuffer));
+void TrackLoader::retireReleased(DeckPlayer::Released released) {
+  for (auto& stem : released.stems) {
+    if (stem != nullptr) {
+      retireBuffer(std::move(stem));
+    }
+  }
+  if (released.track != nullptr) {
+    retireBuffer(std::move(released.track));
   }
 }
 
 void TrackLoader::retireBuffer(std::shared_ptr<const TrackBuffer> buffer) {
   std::lock_guard<std::mutex> lock(retiredMutex_);
-  retiredBuffers_.push_back(std::move(buffer));
+  retiredBuffers_.push_back(RetiredBuffer{std::chrono::steady_clock::now(), clock_ != nullptr ? clock_->load(std::memory_order_relaxed) : 0,
+                                           std::move(buffer)});
 }
 
 void TrackLoader::purgeRetiredBuffers() noexcept {
   std::lock_guard<std::mutex> lock(retiredMutex_);
   retiredBuffers_.clear();
+}
+
+void TrackLoader::purgeExpiredBuffers() noexcept {
+  std::vector<RetiredBuffer> doomed;  // destroyed after the lock is released: freeing a big buffer takes a while
+  {
+    std::lock_guard<std::mutex> lock(retiredMutex_);
+    const auto cutoff = std::chrono::steady_clock::now() - kRetireGrace;
+    const std::uint64_t now = clock_ != nullptr ? clock_->load(std::memory_order_relaxed) : 0;
+    auto expired = [&](const RetiredBuffer& item) {
+      return item.retiredAt <= cutoff && (clock_ == nullptr || now >= item.callbackAt + kRetireCallbacks);
+    };
+    for (auto& item : retiredBuffers_) {
+      if (expired(item)) {
+        doomed.push_back(std::move(item));
+      }
+    }
+    std::erase_if(retiredBuffers_, [](const RetiredBuffer& item) { return item.buffer == nullptr; });
+  }
 }
 
 std::size_t TrackLoader::retiredBuffersCount() const noexcept {
@@ -136,8 +186,8 @@ void TrackLoader::workerLoop() {
       task.callback(result);
     }
 
-    // Safely drain older retired buffers on the worker thread
-    purgeRetiredBuffers();
+    // Free older retired buffers on the worker thread, but not one the audio thread may still be reading.
+    purgeExpiredBuffers();
   }
 }
 

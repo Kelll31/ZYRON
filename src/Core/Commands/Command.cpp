@@ -78,6 +78,9 @@ std::string_view commandName(const Command& command) noexcept {
                         [](const SetGain&) { return std::string_view{"SET_GAIN"}; },
                         [](const SetVolume&) { return std::string_view{"SET_VOLUME"}; },
                         [](const SetEq&) { return std::string_view{"SET_EQ"}; },
+                        [](const SetFilter&) { return std::string_view{"SET_FILTER"}; },
+                        [](const Scratch&) { return std::string_view{"SCRATCH"}; },
+                        [](const GlideTempo&) { return std::string_view{"GLIDE_TEMPO"}; },
                         [](const SetAudioOutput&) { return std::string_view{"SET_AUDIO_OUTPUT"}; },
                         [](const SetTestTone&) { return std::string_view{"SET_TEST_TONE"}; },
                         [](const SetStemVolume&) { return std::string_view{"SET_STEM_VOLUME"}; },
@@ -89,6 +92,19 @@ std::string_view commandName(const Command& command) noexcept {
                         [](const SetCrossfaderAssign&) { return std::string_view{"SET_CROSSFADER_ASSIGN"}; },
                         [](const SetMasterGain&) { return std::string_view{"SET_MASTER_GAIN"}; },
                         [](const SetDeckCue&) { return std::string_view{"SET_DECK_CUE"}; },
+                        [](const Seek&) { return std::string_view{"SEEK"}; },
+                        [](const SetPlaybackSpeed&) { return std::string_view{"SET_PLAYBACK_SPEED"}; },
+                        [](const SetLoop&) { return std::string_view{"SET_LOOP"}; },
+                        [](const SetRecording&) { return std::string_view{"SET_RECORDING"}; },
+                        [](const Sync&) { return std::string_view{"SYNC"}; },
+                        [](const SeparateStems&) { return std::string_view{"SEPARATE_STEMS"}; },
+                        [](const SetKeylock&) { return std::string_view{"SET_KEYLOCK"}; },
+                        [](const SetKeyShift&) { return std::string_view{"SET_KEY_SHIFT"}; },
+                        [](const SetFx&) { return std::string_view{"SET_FX"}; },
+                        [](const SetFxTempo&) { return std::string_view{"SET_FX_TEMPO"}; },
+                        [](const SetTrackGainTrim&) { return std::string_view{"SET_TRACK_GAIN_TRIM"}; },
+                        [](const SetMasterProcessing&) { return std::string_view{"SET_MASTER_PROCESSING"}; },
+                        [](const TriggerFxHit&) { return std::string_view{"TRIGGER_FX_HIT"}; },
                     },
                     command);
 }
@@ -97,9 +113,12 @@ std::optional<DeckId> targetDeck(const Command& command) noexcept {
   return std::visit(Overloaded{
                         [](const SetAudioOutput&) -> std::optional<DeckId> { return std::nullopt; },
                         [](const SetTestTone&) -> std::optional<DeckId> { return std::nullopt; },
+                        [](const SetRecording&) -> std::optional<DeckId> { return std::nullopt; },
                         [](const SetCrossfader&) -> std::optional<DeckId> { return std::nullopt; },
                         [](const SetCrossfaderCurve&) -> std::optional<DeckId> { return std::nullopt; },
                         [](const SetMasterGain&) -> std::optional<DeckId> { return std::nullopt; },
+                        [](const SetMasterProcessing&) -> std::optional<DeckId> { return std::nullopt; },
+                        [](const TriggerFxHit&) -> std::optional<DeckId> { return std::nullopt; },
                         [](const auto& c) noexcept -> std::optional<DeckId> { return c.deck; },
                     },
                     command);
@@ -126,6 +145,25 @@ std::optional<CommandError> validate(const Command& command, const AppState& sta
           [&](const Cue&) { return requireTrack(*deck, "CUE"); },
           [](const SetGain& c) { return checkRange(c.db, limits::kGainMinDb, limits::kGainMaxDb, "gain"); },
           [](const SetVolume& c) { return checkRange(c.linear, limits::kVolumeMin, limits::kVolumeMax, "volume"); },
+          [](const SetFilter& c) { return checkRange(c.position, -1.0F, 1.0F, "filter"); },
+          [](const GlideTempo& c) -> std::optional<CommandError> {
+            if (auto error = checkRange(c.speed, limits::kSpeedMin, limits::kSpeedMax, "playback speed")) {
+              return error;
+            }
+            return checkRange(c.seconds, 0.05, 600.0, "glide time (s)");
+          },
+          [&](const Scratch& c) -> std::optional<CommandError> {
+            if (auto error = requireTrack(*deck, "SCRATCH")) {
+              return error;
+            }
+            if (static_cast<int>(c.pattern) > static_cast<int>(ScratchPattern::Backspin)) {
+              return makeError(CommandErrorCode::OutOfRange, "unknown scratch pattern");
+            }
+            if (auto error = checkRange(c.beats, 0.25, 16.0, "scratch length (beats)")) {
+              return error;
+            }
+            return checkRange(c.beatSeconds, 0.1, 2.0, "beat length (s)");
+          },
           [](const SetEq& c) -> std::optional<CommandError> {
             if (!isValid(c.band)) {
               return makeError(CommandErrorCode::InvalidBand, "EQ band is not low, mid or high");
@@ -184,6 +222,68 @@ std::optional<CommandError> validate(const Command& command, const AppState& sta
             return checkRange(c.db, -60.0F, 12.0F, "master gain");
           },
           [](const SetDeckCue&) -> std::optional<CommandError> { return std::nullopt; },
+          [&](const Seek& c) -> std::optional<CommandError> {
+            if (auto error = requireTrack(*deck, "SEEK")) {
+              return error;
+            }
+            return checkRange(c.seconds, 0.0, limits::kSeekMaxSeconds, "seek position");
+          },
+          [](const SetPlaybackSpeed& c) -> std::optional<CommandError> {
+            return checkRange(c.speed, limits::kSpeedMin, limits::kSpeedMax, "playback speed");
+          },
+          [](const SetRecording&) -> std::optional<CommandError> { return std::nullopt; },
+          [&](const Sync&) { return requireTrack(*deck, "SYNC"); },
+          [&](const SeparateStems&) { return requireTrack(*deck, "SEPARATE_STEMS"); },
+          [](const SetKeylock&) -> std::optional<CommandError> { return std::nullopt; },
+          [](const SetKeyShift& c) -> std::optional<CommandError> {
+            return checkRange(c.semitones, limits::kKeyShiftMinSemitones, limits::kKeyShiftMaxSemitones, "key shift");
+          },
+          [](const SetFx& c) -> std::optional<CommandError> {
+            if (c.slot < 0 || c.slot >= static_cast<int>(kFxSlotCount)) {
+              return makeError(CommandErrorCode::OutOfRange, "FX slot must be 0 or 1");
+            }
+            if (!isValid(c.type)) {
+              return makeError(CommandErrorCode::OutOfRange, "unknown effect type");
+            }
+            if (auto error = checkRange(c.wet, 0.0F, 1.0F, "FX wet")) {
+              return error;
+            }
+            return checkRange(c.param, 0.0F, 1.0F, "FX parameter");
+          },
+          [](const SetFxTempo& c) -> std::optional<CommandError> {
+            return checkRange(c.beatSeconds, limits::kBeatSecondsMin, limits::kBeatSecondsMax, "beat length (s)");
+          },
+          [](const SetTrackGainTrim& c) -> std::optional<CommandError> {
+            return checkRange(c.db, limits::kTrimMinDb, limits::kTrimMaxDb, "track gain trim");
+          },
+          [](const SetMasterProcessing&) -> std::optional<CommandError> { return std::nullopt; },
+          [](const TriggerFxHit& c) -> std::optional<CommandError> {
+            if (!isValid(c.type)) {
+              return makeError(CommandErrorCode::OutOfRange, "unknown FX hit type");
+            }
+            if (auto error = checkRange(c.level, 0.0F, 1.0F, "FX hit level")) {
+              return error;
+            }
+            if (c.beatSeconds == 0.0) {
+              return std::nullopt;  // free: no beat to follow
+            }
+            return checkRange(c.beatSeconds, limits::kBeatSecondsMin, limits::kBeatSecondsMax, "beat length (s)");
+          },
+          [&](const SetLoop& c) -> std::optional<CommandError> {
+            if (auto error = requireTrack(*deck, "SET_LOOP")) {
+              return error;
+            }
+            if (auto error = checkRange(c.startSeconds, 0.0, limits::kSeekMaxSeconds, "loop start")) {
+              return error;
+            }
+            if (auto error = checkRange(c.endSeconds, 0.0, limits::kSeekMaxSeconds, "loop end")) {
+              return error;
+            }
+            if (c.active && c.endSeconds <= c.startSeconds) {
+              return makeError(CommandErrorCode::OutOfRange, "loop end must be after loop start");
+            }
+            return std::nullopt;
+          },
       },
       command);
 }
@@ -198,10 +298,12 @@ AppState apply(const AppState& state, const Command& command) {
                  [&](const LoadTrack& c) {
                    deck->track = c.track;
                    deck->playing = false;
+                   deck->loop = LoopState{};
                  },
                  [&](const UnloadTrack&) {
                    deck->track = TrackId{};
                    deck->playing = false;
+                   deck->loop = LoopState{};
                  },
                  [&](const Play&) { deck->playing = true; },
                  [&](const Pause&) { deck->playing = false; },
@@ -209,6 +311,9 @@ AppState apply(const AppState& state, const Command& command) {
                  [&](const SetGain& c) { deck->gainDb = c.db; },
                  [&](const SetVolume& c) { deck->volume = c.linear; },
                  [&](const SetEq& c) { deck->eqDb.at(index(c.band)) = c.db; },
+                 [&](const SetFilter& c) { deck->filter = c.position; },
+                 [](const Scratch&) {},  // a performance gesture: nothing in the state changes
+                 [&](const GlideTempo& c) { deck->playbackSpeed = c.speed; },  // where it is heading
                  [&](const SetAudioOutput& c) {
                    next.audioOutput = AudioOutputSettings{c.apiName, c.deviceName, c.sampleRate, c.bufferSize};
                  },
@@ -222,6 +327,22 @@ AppState apply(const AppState& state, const Command& command) {
                  [&](const SetCrossfaderAssign& c) { next.mixer.assigns.at(index(c.deck)) = c.assign; },
                  [&](const SetMasterGain& c) { next.mixer.masterGainDb = c.db; },
                  [&](const SetDeckCue& c) { next.mixer.cue.at(index(c.deck)) = c.enabled; },
+                 [&](const SetRecording& c) { next.recording = c.enabled; },
+                 [&](const Sync&) {},  // tempo and phase are engine facts, reported through telemetry
+                 [&](const SeparateStems&) {},  // progress and result are engine facts (DeckLoadStatus)
+                 [&](const Seek&) {},  // the playhead is telemetry; only the engine moves it
+                 [&](const SetPlaybackSpeed& c) { deck->playbackSpeed = c.speed; },
+                 [&](const SetKeylock& c) { deck->keylock = c.enabled; },
+                 [&](const SetKeyShift& c) { deck->keyShift = c.semitones; },
+                 [&](const SetFx& c) {
+                   deck->fx.at(static_cast<std::size_t>(c.slot)) =
+                       FxSlotState{c.type, c.enabled && c.type != FxType::None, c.wet, c.param, c.tailAfterFader};
+                 },
+                 [&](const SetFxTempo& c) { deck->fxBeatSeconds = c.beatSeconds; },
+                 [&](const SetTrackGainTrim& c) { deck->trackGainTrimDb = c.db; },
+                 [&](const SetMasterProcessing& c) { next.masterProcessing = MasterProcessingState{c.glue, c.limiter}; },
+                 [](const TriggerFxHit&) {},  // a performance gesture: nothing in the state changes
+                 [&](const SetLoop& c) { deck->loop = LoopState{c.active, c.startSeconds, c.endSeconds}; },
              },
              command);
   return next;

@@ -20,10 +20,13 @@ option(ZYRON_WARNINGS_AS_ERRORS "Treat compiler warnings on ZYRON targets as err
 
 include(ZyronWarnings)
 include(ZyronDependencies)
+include(ZyronOnnxRuntime)
 
 if(ZYRON_BUILD_APP)
   zyron_require_juce()
 endif()
+
+zyron_require_onnxruntime()  # no-op unless ZYRON_ENABLE_ONNX and Windows
 
 # One static library per module; link edges mirror the allowed include edges in CLAUDE.md.
 add_subdirectory(src/Core)

@@ -54,8 +54,8 @@ class BackgroundQueueComponent : public juce::Component,
 
   juce::Label titleLabel_;
   juce::Label activeCountLabel_;
-  juce::TextButton clearFinishedButton_{"Clear Finished"};
-  juce::TextButton cancelSelectedButton_{"Cancel Task"};
+  juce::TextButton clearFinishedButton_{TRANS("Clear Finished")};
+  juce::TextButton cancelSelectedButton_{TRANS("Cancel Task")};
   juce::TableListBox table_;
 };
 

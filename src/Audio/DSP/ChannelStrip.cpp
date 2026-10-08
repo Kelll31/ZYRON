@@ -12,6 +12,9 @@ float dbToLinear(float db) noexcept {
   return std::pow(10.0F, db * 0.05F);
 }
 
+constexpr int kFxBlockSize = 4096;  // the largest block AudioGraph hands to a strip
+constexpr float kMaxTrimDb = 12.0F;
+
 }  // namespace
 
 ChannelStrip::ChannelStrip() {
@@ -27,6 +30,9 @@ void ChannelStrip::prepare(double sampleRate) noexcept {
   for (auto& slot : fxSlots_) {
     slot.prepare(sampleRate_, 1024);
   }
+  for (auto& unit : fxUnits_) {
+    unit.prepare(sampleRate_, kFxBlockSize);
+  }
   reset();
 }
 
@@ -36,6 +42,10 @@ void ChannelStrip::reset() noexcept {
   for (auto& slot : fxSlots_) {
     slot.reset();
   }
+  for (auto& unit : fxUnits_) {
+    unit.reset();
+  }
+  currentTrimLinear_ = targetTrimLinear_.load(std::memory_order_relaxed);
   currentGainLinear_ = targetGainLinear_.load(std::memory_order_relaxed);
   currentVolumeLinear_ = targetVolumeLinear_.load(std::memory_order_relaxed);
   peakLeft_.store(0.0F, std::memory_order_relaxed);
@@ -45,6 +55,32 @@ void ChannelStrip::reset() noexcept {
 void ChannelStrip::setGainDb(float gainDb) noexcept {
   gainDb = std::clamp(gainDb, -24.0F, 12.0F);
   targetGainLinear_.store(dbToLinear(gainDb), std::memory_order_relaxed);
+}
+
+void ChannelStrip::setTrackGainTrimDb(float trimDb) noexcept {
+  if (!std::isfinite(trimDb)) {
+    return;
+  }
+  trimDb = std::clamp(trimDb, -kMaxTrimDb, kMaxTrimDb);
+  trackTrimDb_.store(trimDb, std::memory_order_relaxed);
+  targetTrimLinear_.store(dbToLinear(trimDb), std::memory_order_relaxed);
+}
+
+void ChannelStrip::setFx(int slot, core::FxType type, bool enabled, float wet, float param, bool postFader) noexcept {
+  if (slot < 0 || slot >= kNumFxSlots) {
+    return;
+  }
+  fxUnits_[static_cast<std::size_t>(slot)].configure(type, enabled, wet, param, postFader);
+}
+
+void ChannelStrip::setFxBeatSeconds(float beatSeconds) noexcept {
+  for (auto& unit : fxUnits_) {
+    unit.setBeatSeconds(beatSeconds);
+  }
+}
+
+const FxUnit& ChannelStrip::fxUnit(int slot) const noexcept {
+  return fxUnits_[static_cast<std::size_t>(std::clamp(slot, 0, kNumFxSlots - 1))];
 }
 
 void ChannelStrip::setEqDb(core::EqBand band, float gainDb) noexcept {
@@ -97,13 +133,15 @@ void ChannelStrip::process(float* const* channels, int numChannels, int numSampl
 
   const bool isMuted = muted_.load(std::memory_order_relaxed);
   const float targetGain = targetGainLinear_.load(std::memory_order_relaxed);
+  const float targetTrim = targetTrimLinear_.load(std::memory_order_relaxed);
   const float targetVol = isMuted ? 0.0F : targetVolumeLinear_.load(std::memory_order_relaxed);
   const int activeChannels = std::min(numChannels, 2);
 
-  // 1. Apply smoothed input trim gain
+  // 1. Apply smoothed track trim and input gain
   for (int i = 0; i < numSamples; ++i) {
     currentGainLinear_ += rampCoeff_ * (targetGain - currentGainLinear_);
-    const float g = currentGainLinear_;
+    currentTrimLinear_ += rampCoeff_ * (targetTrim - currentTrimLinear_);
+    const float g = currentGainLinear_ * currentTrimLinear_;
     for (int ch = 0; ch < activeChannels; ++ch) {
       if (channels[ch] != nullptr) {
         channels[ch][i] *= g;
@@ -117,25 +155,46 @@ void ChannelStrip::process(float* const* channels, int numChannels, int numSampl
   // 3. DJ HPF/LPF Filter
   filter_.process(channels, numChannels, numSamples);
 
-  // 4. FX slots processing (post-filter, pre-fader per ARCHITECTURE section 7)
+  // 4. Free-form FX slots (post-filter, pre-fader per ARCHITECTURE section 7)
   for (auto& slot : fxSlots_) {
     slot.process(channels, numChannels, numSamples);
   }
 
-  // 5. Apply smoothed fader volume & measure peak level
-  float maxL = 0.0F;
-  float maxR = 0.0F;
+  // 4b. Effects that sit before the fader
+  for (auto& unit : fxUnits_) {
+    if (!unit.postFader()) {
+      unit.process(channels, numChannels, numSamples);
+    }
+  }
 
+  // 5. Apply smoothed fader volume
   for (int i = 0; i < numSamples; ++i) {
     currentVolumeLinear_ += rampCoeff_ * (targetVol - currentVolumeLinear_);
     const float v = currentVolumeLinear_;
 
     if (channels[0] != nullptr) {
       channels[0][i] *= v;
-      maxL = std::max(maxL, std::abs(channels[0][i]));
     }
     if (activeChannels > 1 && channels[1] != nullptr) {
       channels[1][i] *= v;
+    }
+  }
+
+  // 6. Effects after the fader: they only see what the fader lets through, and their tails ring on when it closes
+  for (auto& unit : fxUnits_) {
+    if (unit.postFader()) {
+      unit.process(channels, numChannels, numSamples);
+    }
+  }
+
+  // 7. Peak meter, after everything that is heard
+  float maxL = 0.0F;
+  float maxR = 0.0F;
+  for (int i = 0; i < numSamples; ++i) {
+    if (channels[0] != nullptr) {
+      maxL = std::max(maxL, std::abs(channels[0][i]));
+    }
+    if (activeChannels > 1 && channels[1] != nullptr) {
       maxR = std::max(maxR, std::abs(channels[1][i]));
     }
   }

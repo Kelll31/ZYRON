@@ -1,6 +1,6 @@
 # Architecture
 
-Status: **design baseline, nothing implemented.** Items marked *(proposed)* need an ADR/owner OK before code
+Status: **design baseline, implemented for the Windows MVP path** (section 13 describes what the executable actually runs; sections 1-12 are the design and still hold). Items marked *(proposed)* need an ADR/owner OK before code
 depends on them. Spec references (`§N`) point to `SPEC.md`.
 
 ## 1. Big picture
@@ -12,7 +12,7 @@ depends on them. Spec references (`§N`) point to `SPEC.md`.
                                                            ├─► RT message queue ─► Audio thread
  Library / Analysis / Stems / AI workers ◄── tasks ◄───────┤
                                                            └─► Events ─► UI observers
- Audio thread ─► telemetry snapshots (lock-free) ─► UI (60 Hz timer)
+ Audio thread ─► telemetry snapshots (lock-free) ─► UI (30 Hz timer)
 ```
 
 One-way flow of *intent* (Commands) and one-way flow of *facts* (Events, telemetry). Nobody holds a pointer
@@ -131,6 +131,16 @@ Time-stretching dominates CPU. Naively: 4 decks × 4 stems = **16 stretcher inst
 - Memory: 6-min stereo float32 track ≈ 127 MB; 4 stems ≈ 508 MB per deck (~2 GB for 4 decks). Decide
   RAM-resident vs. memory-mapped stem files (ADR-0007) with a stated minimum-RAM profile.
 
+**As built (ADR-0005, ADR-0018, `Audio/DSP/TimeStretcher`, `KeylockRenderer`, `Deck/DeckPlayer`):** the fast path is
+implemented. One Signalsmith Stretch instance per deck serves keylock and key shift; the stems are mixed by `StemMixer`
+first. The stretcher runs only when it changes something (tempo != 1.0 with keylock, or a key shift); `playhead` is the
+audible position, the stretcher reads `inputLatency + tempo * outputLatency` (about 140 ms at 1.0x) ahead of it, and a seek,
+cue, play or loop wrap restarts it aligned to the playhead (about 0.6 ms; `AudioGraph` lets one deck per block do it).
+Measured (MSVC Release, 48 kHz): ~0.7 % of one core per stretching deck, 4.3 % for 4 stretching decks with echo + reverb on
+every channel, glue and limiter. The split path (per-stem routing) has no stretcher yet: `renderStems` stays varispeed.
+Channel signal order is now: trim x gain -> EQ -> filter -> free FX slots -> pre-fader `FxUnit`s -> fader -> post-fader
+`FxUnit`s (echo-out tails) -> meter; master: sum -> master gain -> NaN guard -> glue compressor -> limiter.
+
 ## 9. Library and analysis (§28–§31)
 
 - SQLite in WAL mode, schema versioned with `PRAGMA user_version` migrations, single writer thread, readers via
@@ -179,3 +189,42 @@ implementations in `Platform/<OS>/`. Selected by CMake, not by `#ifdef` in share
 - **Config:** JSON/TOML in the OS app-data dir; versioned; defaults baked in.
 - **Diagnostics panel:** xrun count, queue-full drops, per-block DSP load, GPU/VRAM, worker queues — built early
   (ROADMAP P1-04/P2-05), it is how the stability priority (§88) stays measurable.
+
+## 13. As built: composition root, telemetry and background services (P11)
+
+Verified against the code on 2026-10-08. `tests/integration/test_app_composition.cpp` builds the same object `Main.cpp` runs.
+
+**Composition root.** `Application/ApplicationComposition` owns, in construction order: `StateStore`, `EventBus`, `CommandBus`,
+`LibraryService`, `NeuralModels`, `MasterRecorder`, `AudioEngine`, `StemService`, `AutomixController` (null without a library).
+It opens no device and creates no window; `Main.cpp` starts the device and the UI, tests call the engine callback directly.
+The engine gets what it must not depend on through `AudioEngine::Services` (std::function): `resolvePath` and `gridFor`
+(library), `makeWaveform`, `separateStems`, `trackReady` (stems), `setRecording`. So `Audio` never includes `Library` or `Analysis`.
+
+**Command flow.** UI/MIDI/AI -> `CommandBus::submit` (validate, update `AppState`) -> sinks. The engine is a `CommandSink`
+(`AudioEngine::onCommand`): `LoadTrack`/`UnloadTrack` queue work for the `TrackLoader` thread; `SetAudioOutput`/`SetTestTone`
+are handled on the engine side; `SeparateStems` and `SetRecording` call the injected services; `Sync` is resolved on the
+command thread (grids via `gridFor`, a refusal reason goes out as a `notice`); everything else (Play, Pause, Cue, Seek,
+SetPlaybackSpeed, SetLoop, gain/volume/EQ, stem volume/mute/solo/cue, crossfader/curve/assign, master gain, deck cue)
+is translated to a POD `RtMessage` and pushed through `CommandBridge` (SPSC queue, drop-newest + `droppedMessages` counter).
+The audio callback drains the queue, renders `AudioGraph`, applies the `OutputGate` (click-free master mute) and feeds the
+master tap (recorder) and test tone.
+
+**Telemetry views (Core/Audio/EngineView.hpp).** The UI includes only Core:
+- `ILiveEngineSource::liveState()` -> `LiveEngineState`: per-deck `hasTrack/isPlaying/positionSec/durationSec/peakL/R/hasStems/playbackSpeed`,
+  master peaks, `droppedMessages`, `notice` + `noticeSerial`. Backed by the lock-free snapshot; call from the UI thread only.
+- `IDeckLoadSource::loadStatus(deck)` -> `DeckLoadStatus`: load phase (Empty/Loading/Ready/Failed), track id, `generation`,
+  failure message, the display `WaveformData`, and stem phase/progress/message.
+`MainComponent` polls both at 30 Hz and holds view state only; it keeps no simulated telemetry.
+
+**Background services and threads** (all outside the audio callback):
+
+| Service | Thread | Does |
+|---|---|---|
+| `TrackLoader` (Audio/Deck) | own worker | decode (WAV, then JUCE codecs, ADR-0016) into `TrackBuffer`, build waveform, swap into the deck, deferred frees |
+| `LibraryService` | scan worker + analysis worker + `DatabaseWriter` | SQLite (WAL), incremental folder scan, analysis queue; `TrackAnalyzer` registers the "bpm/beatgrid/key/energy" handlers and decodes each track once |
+| `TrackAnalyzer` | runs on the analysis worker | Beat This! (tempo/grid), S-KEY (key), DSP energy and structure -> AI markers, display peaks `.zywv`; DSP fallback when weights are missing |
+| `StemService` | one worker, one job at a time | HTDemucs via `NeuralModels` (CPU), stem cache `.zyst` (content hash + model + version), hands stems to `AudioEngine::attachStems` |
+| `NeuralModels` | none (mutex-guarded lazy sessions) | locates the models folder (`ZYRON_MODELS_DIR`, app data, next to exe, parents) and shares ONNX sessions; CPU by default (ADR-0015) |
+| `AutomixController` | message thread (`juce::Timer`, 10 Hz) | feeds `AutonomousDjLoop` with real deck telemetry and grids; issues Commands; user action on a deck cancels pending AI commands |
+
+Neural models are Windows-only for now (`ZYRON_ENABLE_ONNX`, ADR-0015); elsewhere the analysers use their DSP paths and stems report "runtime unavailable".

@@ -22,6 +22,12 @@ add_library(zyron_ai STATIC
   Safety/AiSafetyController.cpp)
 add_library(zyron::ai ALIAS zyron_ai)
 
+if(TARGET zyron::onnxruntime)
+  target_sources(zyron_ai PRIVATE Backends/Onnx/OnnxRuntime.cpp)
+  target_link_libraries(zyron_ai PUBLIC zyron::onnxruntime)
+  target_compile_definitions(zyron_ai PUBLIC ZYRON_HAS_ONNX=1)
+endif()
+
 target_include_directories(zyron_ai PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/..")
 target_link_libraries(zyron_ai PUBLIC zyron::core)
 zyron_target_defaults(zyron_ai)

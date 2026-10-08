@@ -2,6 +2,7 @@
 #include "Audio/Effects/DelayEffect.hpp"
 
 #include <algorithm>
+#include <bit>
 #include <cmath>
 
 namespace zyron::audio {
@@ -20,8 +21,8 @@ DelayEffect::DelayEffect() {
 void DelayEffect::prepare(double sampleRate, [[maybe_unused]] int maxBlockSize) noexcept {
   sampleRate_ = (sampleRate > 0.0) ? sampleRate : 48000.0;
 
-  // Power of 2 buffer capacity: 524288 samples (~10.9s at 48kHz, ~2.73s at 192kHz)
-  const std::size_t capacity = 524288;
+  // Power of 2 that holds the longest delay (2 s) at this rate: 131072 frames at 48 kHz (1 MB for both channels).
+  const std::size_t capacity = std::bit_ceil(static_cast<std::size_t>(sampleRate_ * 2.05) + 8);
   bufferL_.assign(capacity, 0.0F);
   bufferR_.assign(capacity, 0.0F);
   bufferMask_ = static_cast<int>(capacity - 1);

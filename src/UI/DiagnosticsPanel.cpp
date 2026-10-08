@@ -13,7 +13,7 @@ DiagnosticsPanel::DiagnosticsPanel(const Theme& theme) {
   view_.setColour(juce::TextEditor::textColourId, theme.text);
   view_.setColour(juce::TextEditor::outlineColourId, theme.textDim.withAlpha(0.3F));
   view_.setColour(juce::TextEditor::focusedOutlineColourId, theme.accent);
-  view_.setText("Detecting hardware...", false);
+  view_.setText(TRANS("Detecting hardware..."), false);
   addAndMakeVisible(view_);
 }
 

@@ -55,11 +55,11 @@ class RecommendationPanel : public juce::Component, public juce::TableListBoxMod
 
   juce::Label headerLabel_;
   juce::Label currentTrackLabel_;
-  juce::ToggleButton harmonicOnlyToggle_{"Harmonic Only (Camelot)"};
+  juce::ToggleButton harmonicOnlyToggle_{TRANS("Harmonic Only (Camelot)")};
   juce::ComboBox energyGoalCombo_;
   juce::Slider pitchToleranceSlider_;
   juce::Label pitchToleranceLabel_;
-  juce::TextButton refreshButton_{"Refresh"};
+  juce::TextButton refreshButton_{TRANS("Refresh")};
   juce::TableListBox table_;
 };
 

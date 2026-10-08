@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "UI/Settings/BackgroundQueueComponent.hpp"
+#include "UI/Localization.hpp"
 
 #include <cmath>
 
@@ -8,12 +9,12 @@ namespace zyron::ui {
 BackgroundQueueComponent::BackgroundQueueComponent(std::shared_ptr<core::IBackgroundQueueManager> queueManager,
                                                    Theme theme)
     : queueManager_(std::move(queueManager)), theme_(theme) {
-  titleLabel_.setText("AI Background Task Queue (SPEC \xc2\xa7""41)", juce::dontSendNotification);
+  titleLabel_.setText(juce::String(TRANS("AI Background Task Queue")) + juce::String::fromUTF8(" (SPEC \xc2\xa7""41)"), juce::dontSendNotification);
   titleLabel_.setFont(juce::FontOptions{18.0F, juce::Font::bold});
   titleLabel_.setColour(juce::Label::textColourId, theme_.text);
   addAndMakeVisible(titleLabel_);
 
-  activeCountLabel_.setText("Active: 0", juce::dontSendNotification);
+  activeCountLabel_.setText(TRANS("Active: 0"), juce::dontSendNotification);
   activeCountLabel_.setFont(juce::FontOptions{12.0F});
   activeCountLabel_.setColour(juce::Label::textColourId, theme_.textDim);
   addAndMakeVisible(activeCountLabel_);
@@ -40,11 +41,11 @@ BackgroundQueueComponent::BackgroundQueueComponent(std::shared_ptr<core::IBackgr
 
   auto& header = table_.getHeader();
   header.addColumn("ID", ColId, 50, 40, 80);
-  header.addColumn("Task Name", ColName, 220, 150, 350);
-  header.addColumn("Priority", ColPriority, 90, 70, 120);
-  header.addColumn("Device", ColDevice, 80, 60, 110);
-  header.addColumn("Status", ColStatus, 95, 75, 130);
-  header.addColumn("Progress", ColProgress, 180, 120, 300);
+  header.addColumn(TRANS("Task Name"), ColName, 220, 150, 350);
+  header.addColumn(TRANS("Priority"), ColPriority, 90, 70, 120);
+  header.addColumn(TRANS("Device"), ColDevice, 80, 60, 110);
+  header.addColumn(TRANS("Status"), ColStatus, 95, 75, 130);
+  header.addColumn(TRANS("Progress"), ColProgress, 180, 120, 300);
 
   table_.setModel(this);
   table_.setMultipleSelectionEnabled(false);
@@ -72,7 +73,7 @@ void BackgroundQueueComponent::refresh() {
   if (queueManager_ != nullptr) {
     cachedJobs_ = queueManager_->allJobs();
     const auto activeCount = queueManager_->activeJobCount();
-    activeCountLabel_.setText("Active tasks: " + std::to_string(activeCount), juce::dontSendNotification);
+    activeCountLabel_.setText(juce::String(TRANS("Active tasks:")) + " " + juce::String(activeCount), juce::dontSendNotification);
   }
   table_.updateContent();
   table_.repaint();
@@ -145,13 +146,13 @@ void BackgroundQueueComponent::paintCell(juce::Graphics& g, int rowNumber, int c
       } else {
         g.setColour(theme_.textDim);
       }
-      g.drawText(std::string(core::queuePriorityName(item.priority)), cellBounds,
+      g.drawText(i18n::translateMessage(core::queuePriorityName(item.priority)), cellBounds,
                  juce::Justification::centredLeft, true);
       break;
 
     case ColDevice:
       g.setColour(theme_.deckA);  // Cyan for GPU devices
-      g.drawText(item.deviceName, cellBounds, juce::Justification::centredLeft, true);
+      g.drawText(i18n::translateMessage(item.deviceName), cellBounds, juce::Justification::centredLeft, true);
       break;
 
     case ColStatus: {
@@ -166,7 +167,7 @@ void BackgroundQueueComponent::paintCell(juce::Graphics& g, int rowNumber, int c
         statusCol = theme_.textDim;
       }
       g.setColour(statusCol);
-      g.drawText(std::string(core::queueItemStatusName(item.status)), cellBounds,
+      g.drawText(i18n::translateMessage(core::queueItemStatusName(item.status)), cellBounds,
                  juce::Justification::centredLeft, true);
       break;
     }

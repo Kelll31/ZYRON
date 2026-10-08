@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "UI/AI/SetBuilderComponent.hpp"
+#include "UI/Localization.hpp"
 
 #include <iomanip>
 #include <sstream>
@@ -54,9 +55,9 @@ void EnergyCurveChart::paint(juce::Graphics& g) {
 
   // Legend
   g.setColour(theme_.deckA);
-  g.drawText("--- Target Energy", static_cast<int>(plotArea.getX()), 4, 120, 14, juce::Justification::centredLeft);
+  g.drawText(TRANS("--- Target Energy"), static_cast<int>(plotArea.getX()), 4, 120, 14, juce::Justification::centredLeft);
   g.setColour(theme_.accent);
-  g.drawText("--- Realized Energy", static_cast<int>(plotArea.getX()) + 130, 4, 130, 14, juce::Justification::centredLeft);
+  g.drawText(TRANS("--- Realized Energy"), static_cast<int>(plotArea.getX()) + 130, 4, 130, 14, juce::Justification::centredLeft);
 
   if (!plan_.targetEnergyCurve.empty()) {
     // 1. Draw Target Curve (Cyan)
@@ -122,38 +123,38 @@ SetBuilderComponent::SetBuilderComponent()
 SetBuilderComponent::SetBuilderComponent(core::ISetBuilder& builder)
     : builder_(&builder) {
   // Title
-  titleLabel_.setText("AI SET BUILDER & ENERGY CURVE PLANNER", juce::dontSendNotification);
+  titleLabel_.setText(TRANS("AI SET BUILDER & ENERGY CURVE PLANNER"), juce::dontSendNotification);
   titleLabel_.setFont(juce::FontOptions(14.0f).withStyle("Bold"));
   titleLabel_.setColour(juce::Label::textColourId, theme_.accent);
   addAndMakeVisible(titleLabel_);
 
   // Preset
-  presetLabel_.setText("Profile:", juce::dontSendNotification);
+  presetLabel_.setText(TRANS("Profile:"), juce::dontSendNotification);
   presetLabel_.setColour(juce::Label::textColourId, theme_.textDim);
   addAndMakeVisible(presetLabel_);
 
-  presetCombo_.addItem("Peak Hour", 1);
-  presetCombo_.addItem("Progressive Climb", 2);
-  presetCombo_.addItem("Wave Pattern", 3);
-  presetCombo_.addItem("Warmup", 4);
-  presetCombo_.addItem("High-Energy Banger", 5);
+  presetCombo_.addItem(TRANS("Peak Hour"), 1);
+  presetCombo_.addItem(TRANS("Progressive Climb"), 2);
+  presetCombo_.addItem(TRANS("Wave Pattern"), 3);
+  presetCombo_.addItem(TRANS("Warmup"), 4);
+  presetCombo_.addItem(TRANS("High-Energy Banger"), 5);
   presetCombo_.setSelectedId(1, juce::dontSendNotification);
   addAndMakeVisible(presetCombo_);
 
   // Duration
-  durationLabel_.setText("Duration:", juce::dontSendNotification);
+  durationLabel_.setText(TRANS("Duration:"), juce::dontSendNotification);
   durationLabel_.setColour(juce::Label::textColourId, theme_.textDim);
   addAndMakeVisible(durationLabel_);
 
-  durationCombo_.addItem("30 Minutes", 1);
-  durationCombo_.addItem("45 Minutes", 2);
-  durationCombo_.addItem("60 Minutes", 3);
-  durationCombo_.addItem("90 Minutes", 4);
+  durationCombo_.addItem(TRANS("30 Minutes"), 1);
+  durationCombo_.addItem(TRANS("45 Minutes"), 2);
+  durationCombo_.addItem(TRANS("60 Minutes"), 3);
+  durationCombo_.addItem(TRANS("90 Minutes"), 4);
   durationCombo_.setSelectedId(3, juce::dontSendNotification);
   addAndMakeVisible(durationCombo_);
 
   // Genre
-  genreLabel_.setText("Genre:", juce::dontSendNotification);
+  genreLabel_.setText(TRANS("Genre:"), juce::dontSendNotification);
   genreLabel_.setColour(juce::Label::textColourId, theme_.textDim);
   addAndMakeVisible(genreLabel_);
 
@@ -169,7 +170,7 @@ SetBuilderComponent::SetBuilderComponent(core::ISetBuilder& builder)
   addAndMakeVisible(buildButton_);
 
   // Summary Label
-  summaryLabel_.setText("Ready to plan set.", juce::dontSendNotification);
+  summaryLabel_.setText(TRANS("Ready to plan set."), juce::dontSendNotification);
   summaryLabel_.setFont(juce::FontOptions(12.0f));
   summaryLabel_.setColour(juce::Label::textColourId, theme_.textDim);
   addAndMakeVisible(summaryLabel_);
@@ -181,13 +182,13 @@ SetBuilderComponent::SetBuilderComponent(core::ISetBuilder& builder)
   // Table
   auto& header = trackTable_.getHeader();
   header.addColumn("#", ColIndex, 35, 25, 45);
-  header.addColumn("Start Time", ColTime, 80, 60, 110);
-  header.addColumn("Artist", ColArtist, 130, 80, 220);
-  header.addColumn("Title", ColTitle, 170, 100, 300);
+  header.addColumn(TRANS("Start Time"), ColTime, 80, 60, 110);
+  header.addColumn(TRANS("Artist"), ColArtist, 130, 80, 220);
+  header.addColumn(TRANS("Title"), ColTitle, 170, 100, 300);
   header.addColumn("BPM", ColBpm, 55, 45, 75);
   header.addColumn("Key", ColKey, 50, 40, 70);
-  header.addColumn("Energy", ColEnergy, 55, 45, 75);
-  header.addColumn("Transition Quality", ColTransition, 160, 100, 300);
+  header.addColumn(TRANS("Energy"), ColEnergy, 55, 45, 75);
+  header.addColumn(TRANS("Transition Quality"), ColTransition, 160, 100, 300);
 
   trackTable_.setModel(this);
   trackTable_.setColour(juce::ListBox::backgroundColourId, theme_.background);
@@ -213,7 +214,7 @@ void SetBuilderComponent::setCatalog(std::vector<core::TrackItem> catalog) {
 
 void SetBuilderComponent::planSet() {
   if (!builder_ || catalog_.empty()) {
-    summaryLabel_.setText("No builder service or empty catalog.", juce::dontSendNotification);
+    summaryLabel_.setText(TRANS("No builder service or empty catalog."), juce::dontSendNotification);
     return;
   }
 
@@ -239,7 +240,7 @@ void SetBuilderComponent::planSet() {
 
   plan_ = builder_->buildSet(req, catalog_);
   chart_.setPlan(plan_);
-  summaryLabel_.setText(plan_.summary, juce::dontSendNotification);
+  summaryLabel_.setText(i18n::translateMessage(plan_.summary), juce::dontSendNotification);
   trackTable_.updateContent();
   trackTable_.repaint();
 }

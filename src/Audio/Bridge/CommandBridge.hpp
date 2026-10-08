@@ -36,7 +36,19 @@ enum class RtMessageType : std::uint8_t {
   DeckStemVolume,
   DeckStemMute,
   DeckStemSolo,
-  DeckStemCue
+  DeckStemCue,
+  DeckSeekSeconds,
+  DeckLoop,
+  DeckScratch,
+  DeckPhaseLock,
+  DeckTempoGlide,
+  DeckKeylock,
+  DeckKeyShift,
+  DeckFx,
+  DeckFxTempo,
+  DeckTrackTrim,
+  MixerProcessing,
+  MixerFxHit
 };
 
 struct RtMessage {
@@ -44,6 +56,12 @@ struct RtMessage {
   core::DeckId deck{core::DeckId::A};
   union {
     std::int64_t seekSample;
+    double seekSeconds;
+    struct {
+      double startSeconds;
+      double endSeconds;
+      bool active;
+    } loop;
     float gainDb;
     float volumeLinear;
     struct {
@@ -51,7 +69,46 @@ struct RtMessage {
       float gainDb;
     } eq;
     float filterBipolar;
+    struct {
+      std::uint8_t master;
+      double targetBpm;
+      std::int64_t targetFirstBeat;
+      int targetRate;
+      double masterBpm;
+      std::int64_t masterFirstBeat;
+      int masterRate;
+    } phaseLock;
+    struct {
+      double speed;
+      double seconds;
+    } glide;
+    struct {
+      std::uint8_t pattern;
+      float beats;
+      float beatSeconds;
+    } scratch;
     double speedRatio;
+    bool keylockEnabled;
+    float keyShiftSemitones;
+    struct {
+      std::uint8_t slot;
+      core::FxType type;
+      bool enabled;
+      bool tailAfterFader;
+      float wet;
+      float param;
+    } fx;
+    float fxBeatSeconds;
+    float trackTrimDb;
+    struct {
+      bool glue;
+      bool limiter;
+    } processing;
+    struct {
+      core::FxHitType type;
+      float level;
+      double beatSeconds;
+    } fxHit;
     float crossfaderPosition;
     CrossfaderCurve crossfaderCurve;
     struct {
@@ -83,11 +140,26 @@ struct RtMessage {
   static RtMessage makePause(core::DeckId deck) noexcept;
   static RtMessage makeCue(core::DeckId deck) noexcept;
   static RtMessage makeSeek(core::DeckId deck, std::int64_t sample) noexcept;
+  static RtMessage makeSeekSeconds(core::DeckId deck, double seconds) noexcept;
+  static RtMessage makeLoop(core::DeckId deck, double startSeconds, double endSeconds, bool active) noexcept;
   static RtMessage makeGain(core::DeckId deck, float gainDb) noexcept;
   static RtMessage makeVolume(core::DeckId deck, float linear) noexcept;
   static RtMessage makeEq(core::DeckId deck, core::EqBand band, float gainDb) noexcept;
   static RtMessage makeFilter(core::DeckId deck, float bipolar) noexcept;
+  static RtMessage makeTempoGlide(core::DeckId deck, double speed, double seconds) noexcept;
+  /// Start `deck` in phase with `master` on its next Play, using these grids (copied: no shared state).
+  static RtMessage makePhaseLock(core::DeckId deck, core::DeckId master, double targetBpm, std::int64_t targetFirstBeat,
+                                int targetRate, double masterBpm, std::int64_t masterFirstBeat, int masterRate) noexcept;
+  static RtMessage makeScratch(core::DeckId deck, core::ScratchPattern pattern, double beats, double beatSeconds) noexcept;
   static RtMessage makePlaybackSpeed(core::DeckId deck, double speedRatio) noexcept;
+  static RtMessage makeKeylock(core::DeckId deck, bool enabled) noexcept;
+  static RtMessage makeKeyShift(core::DeckId deck, float semitones) noexcept;
+  static RtMessage makeFx(core::DeckId deck, int slot, core::FxType type, bool enabled, float wet, float param,
+                          bool tailAfterFader) noexcept;
+  static RtMessage makeFxTempo(core::DeckId deck, double beatSeconds) noexcept;
+  static RtMessage makeTrackTrim(core::DeckId deck, float db) noexcept;
+  static RtMessage makeMasterProcessing(bool glue, bool limiter) noexcept;
+  static RtMessage makeFxHit(core::FxHitType type, float level, double beatSeconds) noexcept;
   static RtMessage makeCrossfader(float position) noexcept;
   static RtMessage makeCrossfaderCurve(CrossfaderCurve curve) noexcept;
   static RtMessage makeChannelAssign(int channel, CrossfaderAssign assign) noexcept;

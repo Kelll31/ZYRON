@@ -13,7 +13,8 @@ add_library(zyron_library STATIC
   Metadata/MetadataExtractor.cpp
   Scanner/LibraryScanner.cpp
   Analysis/AnalysisTaskQueue.cpp
-  Database/SqliteLibrarySource.cpp)
+  Database/SqliteLibrarySource.cpp
+  LibraryService.cpp)
 add_library(zyron::library ALIAS zyron_library)
 
 target_include_directories(zyron_library PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/..")

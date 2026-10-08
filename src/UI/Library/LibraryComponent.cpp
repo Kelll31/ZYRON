@@ -10,7 +10,7 @@ namespace zyron::ui {
 LibraryComponent::LibraryComponent(std::shared_ptr<core::ILibrarySource> source, Theme theme)
     : source_(std::move(source)), theme_(theme) {
   // 1. Search Box
-  searchBox_.setTextToShowWhenEmpty("Search tracks by artist, title, genre, BPM, key, path...",
+  searchBox_.setTextToShowWhenEmpty(TRANS("Search tracks by artist, title, genre, BPM, key, path..."),
                                     theme_.textDim);
   searchBox_.addListener(this);
   searchBox_.setColour(juce::TextEditor::backgroundColourId, theme_.panel);
@@ -21,7 +21,7 @@ LibraryComponent::LibraryComponent(std::shared_ptr<core::ILibrarySource> source,
   // 2. Buttons
   scanButton_.onClick = [this] {
     fileChooser_ = std::make_unique<juce::FileChooser>(
-        "Select Music Folder to Scan", juce::File::getSpecialLocation(juce::File::userMusicDirectory));
+        TRANS("Select Music Folder to Scan"), juce::File::getSpecialLocation(juce::File::userMusicDirectory));
     const auto folderFlags = juce::FileBrowserComponent::openMode |
                              juce::FileBrowserComponent::canSelectDirectories;
     fileChooser_->launchAsync(folderFlags, [this](const juce::FileChooser& chooser) {
@@ -50,6 +50,25 @@ LibraryComponent::LibraryComponent(std::shared_ptr<core::ILibrarySource> source,
   loadDeckBButton_.setColour(juce::TextButton::textColourOffId, theme_.accent);
   addAndMakeVisible(loadDeckBButton_);
 
+  mixNextButton_.setColour(juce::TextButton::buttonColourId, theme_.panel);
+  mixNextButton_.setColour(juce::TextButton::textColourOffId, theme_.playActive);
+  mixNextButton_.setTooltip(TRANS("Mix the selected track in live: the playing deck is mixed into it"));
+  mixNextButton_.onClick = [this] {
+    const int row = table_.getSelectedRow();
+    if (row >= 0 && row < static_cast<int>(displayedTracks_.size()) && onMixNextRequested) {
+      onMixNextRequested(displayedTracks_[static_cast<std::size_t>(row)]);
+    }
+  };
+  addAndMakeVisible(mixNextButton_);
+
+  for (auto* button : {&loadDeckCButton_, &loadDeckDButton_}) {
+    button->setColour(juce::TextButton::buttonColourId, theme_.panel);
+    button->setColour(juce::TextButton::textColourOffId, theme_.accent);
+    addChildComponent(*button);
+  }
+  loadDeckCButton_.onClick = [this] { loadSelectedTrackToDeck(core::DeckId::C); };
+  loadDeckDButton_.onClick = [this] { loadSelectedTrackToDeck(core::DeckId::D); };
+
   // 3. Status Label
   statusLabel_.setColour(juce::Label::textColourId, theme_.textDim);
   statusLabel_.setFont(juce::FontOptions(12.0f));
@@ -62,14 +81,15 @@ LibraryComponent::LibraryComponent(std::shared_ptr<core::ILibrarySource> source,
 
   auto& header = table_.getHeader();
   header.addColumn("#", ColIndex, 36, 25, 50, juce::TableHeaderComponent::notSortable);
-  header.addColumn("Title", ColTitle, 200, 100, 400, colFlags);
-  header.addColumn("Artist", ColArtist, 150, 80, 300, colFlags);
+  header.addColumn(TRANS("Title"), ColTitle, 200, 100, 400, colFlags);
+  header.addColumn(TRANS("Artist"), ColArtist, 150, 80, 300, colFlags);
   header.addColumn("BPM", ColBpm, 65, 50, 90, colFlags);
   header.addColumn("Key", ColKey, 65, 50, 90, colFlags);
-  header.addColumn("Energy", ColEnergy, 65, 50, 90, colFlags);
-  header.addColumn("Time", ColDuration, 60, 45, 80, colFlags);
-  header.addColumn("Genre", ColGenre, 110, 60, 200, colFlags);
-  header.addColumn("File Path", ColPath, 250, 100, 600, colFlags);
+  header.addColumn(TRANS("Energy"), ColEnergy, 65, 50, 90, colFlags);
+  header.addColumn(TRANS("Time"), ColDuration, 60, 45, 80, colFlags);
+  header.addColumn(TRANS("Status"), ColStatus, 100, 70, 160, colFlags);
+  header.addColumn(TRANS("Genre"), ColGenre, 110, 60, 200, colFlags);
+  header.addColumn(TRANS("File Path"), ColPath, 250, 100, 600, colFlags);
 
   table_.setModel(this);
   table_.setColour(juce::ListBox::backgroundColourId, theme_.background);
@@ -119,12 +139,66 @@ void LibraryComponent::filterTracks(const juce::String& query) {
   sortCurrentTracks();
   table_.updateContent();
 
+  updateStatusText();
+}
+
+void LibraryComponent::updateStatusText() {
   juce::String status;
-  status << displayedTracks_.size() << " tracks";
+  status << juce::String(TRANS("%n tracks")).replace("%n", juce::String(displayedTracks_.size()));
   if (displayedTracks_.size() != allTracks_.size()) {
-    status << " (filtered from " << allTracks_.size() << ")";
+    status << " " << juce::String(TRANS("(filtered from %n)")).replace("%n", juce::String(allTracks_.size()));
+  }
+  if (scan_.scanning) {
+    status << " | " << TRANS("scanning") << " " << static_cast<int>(scan_.processed) << "/"
+           << static_cast<int>(scan_.discovered);
+  } else if (scan_.analysisPending > 0) {
+    status << " | "
+           << juce::String(TRANS("preparing: %n tasks left")).replace("%n", juce::String(scan_.analysisPending));
+    if (pendingHistory_.size() >= 2) {
+      const auto& oldest = pendingHistory_.front();
+      const auto& newest = pendingHistory_.back();
+      const double seconds = std::chrono::duration<double>(newest.at - oldest.at).count();
+      const double done = static_cast<double>(oldest.pending) - static_cast<double>(newest.pending);
+      if (seconds > 5.0 && done > 0.0) {
+        const int remaining = static_cast<int>(static_cast<double>(newest.pending) / (done / seconds));
+        status << " (~" << (remaining >= 90 ? juce::String((remaining + 30) / 60) + " " + TRANS("min") : juce::String(remaining) + " " + TRANS("s"))
+               << ")";
+      }
+    }
+  } else if (!scan_.lastError.empty()) {
+    status << " | " << TRANS("scan failed") << ": " << scan_.lastError;
   }
   statusLabel_.setText(status, juce::dontSendNotification);
+}
+
+void LibraryComponent::updateScanStatus() {
+  if (!source_) {
+    return;
+  }
+  const core::LibraryScanStatus latest = source_->scanStatus();
+  const bool changed = latest.processed != scan_.processed || latest.scanning != scan_.scanning ||
+                       latest.analysisPending != scan_.analysisPending;
+  scan_ = latest;
+
+  // Keep about a minute of samples for the time-left estimate; a rising count (new work) restarts it.
+  const auto now = std::chrono::steady_clock::now();
+  if (!pendingHistory_.empty() && latest.analysisPending > pendingHistory_.back().pending) {
+    pendingHistory_.clear();
+  }
+  pendingHistory_.push_back({now, latest.analysisPending});
+  while (pendingHistory_.size() > 1 && now - pendingHistory_.front().at > std::chrono::seconds(60)) {
+    pendingHistory_.pop_front();
+  }
+  if (changed) {
+    refreshTracks();  // new rows appeared (or the scan finished): reload the table and the status text
+  }
+}
+
+void LibraryComponent::setFourDecks(bool fourDecks) {
+  fourDecks_ = fourDecks;
+  loadDeckCButton_.setVisible(fourDecks);
+  loadDeckDButton_.setVisible(fourDecks);
+  resized();
 }
 
 void LibraryComponent::sortCurrentTracks() {
@@ -138,6 +212,12 @@ void LibraryComponent::sortCurrentTracks() {
                 case ColKey: cmp = a.key.compare(b.key); break;
                 case ColEnergy: cmp = (a.energy < b.energy) ? -1 : ((a.energy > b.energy) ? 1 : 0); break;
                 case ColDuration: cmp = (a.durationSec < b.durationSec) ? -1 : ((a.durationSec > b.durationSec) ? 1 : 0); break;
+                case ColStatus: {
+                  const double ra = a.analysisTotal > 0 ? static_cast<double>(a.analysisDone) / a.analysisTotal : 0.0;
+                  const double rb = b.analysisTotal > 0 ? static_cast<double>(b.analysisDone) / b.analysisTotal : 0.0;
+                  cmp = (ra < rb) ? -1 : ((ra > rb) ? 1 : 0);
+                  break;
+                }
                 case ColGenre: cmp = a.genre.compare(b.genre); break;
                 case ColPath: cmp = a.filepath.compare(b.filepath); break;
                 default: cmp = a.title.compare(b.title); break;
@@ -179,7 +259,7 @@ void LibraryComponent::paintCell(juce::Graphics& g, int rowNumber, int columnId,
       break;
     case ColTitle:
       g.setFont(juce::FontOptions(12.0f).withStyle("Bold"));
-      g.drawText(track.title.empty() ? "(Untitled)" : track.title, cellBounds, juce::Justification::centredLeft, true);
+      g.drawText(track.title.empty() ? TRANS("(Untitled)") : track.title, cellBounds, juce::Justification::centredLeft, true);
       break;
     case ColArtist:
       g.drawText(track.artist, cellBounds, juce::Justification::centredLeft, true);
@@ -222,6 +302,29 @@ void LibraryComponent::paintCell(juce::Graphics& g, int rowNumber, int columnId,
     case ColDuration:
       g.drawText(track.formatDuration(), cellBounds, juce::Justification::centredRight, true);
       break;
+    case ColStatus: {
+      // How far the background preparation (tempo, grid, key, energy, structure) has got for this track.
+      const auto bar = juce::Rectangle<float>(4.0f, 4.0f, static_cast<float>(width) - 8.0f, static_cast<float>(height) - 8.0f);
+      if (track.analysisTotal <= 0) {
+        g.setColour(theme_.textDim);
+        g.drawText("--", cellBounds, juce::Justification::centred, true);
+      } else if (track.analysisDone >= track.analysisTotal) {
+        g.setColour(track.analysisFailed > 0 ? theme_.meterRed.withAlpha(0.9f) : theme_.playActive);
+        g.drawText(track.analysisFailed > 0 ? juce::String(TRANS("Ready (%n failed)")).replace("%n", juce::String(track.analysisFailed))
+                                            : juce::String(TRANS("Ready")),
+                   cellBounds, juce::Justification::centred, true);
+      } else {
+        const float fraction = static_cast<float>(track.analysisDone) / static_cast<float>(track.analysisTotal);
+        g.setColour(theme_.panel.brighter(0.15f));
+        g.fillRoundedRectangle(bar, 3.0f);
+        g.setColour(theme_.accent.withAlpha(0.55f));
+        g.fillRoundedRectangle(bar.withWidth(bar.getWidth() * fraction), 3.0f);
+        g.setColour(theme_.text);
+        g.drawText(juce::String(TRANS("Preparing")) + " " + juce::String(track.analysisDone) + "/" + juce::String(track.analysisTotal), cellBounds,
+                   juce::Justification::centred, true);
+      }
+      break;
+    }
     case ColGenre:
       g.setColour(theme_.textDim);
       g.drawText(track.genre, cellBounds, juce::Justification::centredLeft, true);
@@ -239,6 +342,86 @@ void LibraryComponent::cellDoubleClicked(int rowNumber, int columnId, const juce
   juce::ignoreUnused(columnId, e);
   if (rowNumber >= 0 && rowNumber < static_cast<int>(displayedTracks_.size())) {
     loadSelectedTrackToDeck(core::DeckId::A);
+  }
+}
+
+void LibraryComponent::cellClicked(int rowNumber, int columnId, const juce::MouseEvent& e) {
+  juce::ignoreUnused(columnId);
+  if (e.mods.isPopupMenu() && rowNumber >= 0 && rowNumber < static_cast<int>(displayedTracks_.size())) {
+    table_.selectRow(rowNumber);
+    showTrackMenu(rowNumber);
+  }
+}
+
+void LibraryComponent::showTrackMenu(int row) {
+  const core::TrackItem track = displayedTracks_[static_cast<std::size_t>(row)];
+  const bool prepared = track.analysisTotal > 0 && track.analysisDone >= track.analysisTotal && track.analysisFailed == 0;
+
+  juce::PopupMenu menu;
+  menu.addSectionHeader(track.title.empty() ? juce::String(TRANS("(Untitled)")) : juce::String(track.title));
+  menu.addItem(1, TRANS("Load to deck A"));
+  menu.addItem(2, TRANS("Load to deck B"));
+  if (fourDecks_) {
+    menu.addItem(3, TRANS("Load to deck C"));
+    menu.addItem(4, TRANS("Load to deck D"));
+  }
+  menu.addSeparator();
+  menu.addItem(10, TRANS("Mix next (live)"), onMixNextRequested != nullptr);
+  menu.addSeparator();
+  menu.addItem(20, prepared ? TRANS("Analyse now (already prepared)") : TRANS("Analyse now (prepare this track first)"), source_ != nullptr && !prepared);
+  menu.addItem(21, TRANS("Re-analyse with the AI (tempo, key, markers)"), source_ != nullptr);
+  menu.addSeparator();
+  menu.addItem(30, TRANS("Show in file manager"));
+  menu.addItem(31, TRANS("Copy file path"));
+  menu.addSeparator();
+  menu.addItem(40, TRANS("Remove from library..."), source_ != nullptr);
+
+  menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(&table_), [this, track](int choice) {
+    const juce::File file(juce::String::fromUTF8(track.filepath.c_str()));
+    switch (choice) {
+      case 1: loadTrackToDeck(track, core::DeckId::A); break;
+      case 2: loadTrackToDeck(track, core::DeckId::B); break;
+      case 3: loadTrackToDeck(track, core::DeckId::C); break;
+      case 4: loadTrackToDeck(track, core::DeckId::D); break;
+      case 10:
+        if (onMixNextRequested) onMixNextRequested(track);
+        break;
+      case 20:
+        source_->prioritizeAnalysis(track.id);
+        refreshTracks();
+        break;
+      case 21:
+        source_->reanalyze(track.id);
+        refreshTracks();
+        break;
+      case 30:
+        file.revealToUser();
+        break;
+      case 31:
+        juce::SystemClipboard::copyTextToClipboard(file.getFullPathName());
+        break;
+      case 40:
+        juce::AlertWindow::showOkCancelBox(
+            juce::MessageBoxIconType::QuestionIcon, TRANS("Remove from library"),
+            juce::String(TRANS("Remove \"%t\" from the library?\nThe file on disk is not touched."))
+                .replace("%t", juce::String(track.title)),
+            TRANS("Remove"),
+            TRANS("Cancel"), this, juce::ModalCallbackFunction::create([this, id = track.id](int result) {
+              if (result == 1 && source_) {
+                source_->removeTrack(id);
+                refreshTracks();
+              }
+            }));
+        break;
+      default:
+        break;
+    }
+  });
+}
+
+void LibraryComponent::loadTrackToDeck(const core::TrackItem& track, core::DeckId deck) {
+  if (onTrackLoadRequested) {
+    onTrackLoadRequested(track, deck);
   }
 }
 
@@ -283,9 +466,18 @@ void LibraryComponent::resized() {
   loadDeckAButton_.setBounds(topBar.removeFromLeft(70));
   topBar.removeFromLeft(4);
   loadDeckBButton_.setBounds(topBar.removeFromLeft(70));
-  topBar.removeFromLeft(12);
+  topBar.removeFromLeft(4);
+  mixNextButton_.setBounds(topBar.removeFromLeft(80));
+  topBar.removeFromLeft(4);
+  if (fourDecks_) {
+    loadDeckCButton_.setBounds(topBar.removeFromLeft(70));
+    topBar.removeFromLeft(4);
+    loadDeckDButton_.setBounds(topBar.removeFromLeft(70));
+    topBar.removeFromLeft(4);
+  }
+  topBar.removeFromLeft(8);
 
-  statusLabel_.setBounds(topBar.removeFromRight(140));
+  statusLabel_.setBounds(topBar.removeFromRight(300));
   searchBox_.setBounds(topBar);
 
   bounds.removeFromTop(6);

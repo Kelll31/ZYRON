@@ -1,5 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "UI/MainComponent.hpp"
+#include "UI/Automix/AutomixPersistence.hpp"
+#include "UI/Automix/AutomixTaste.hpp"
+#include "UI/Localization.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -7,71 +10,61 @@
 
 namespace zyron::ui {
 
-namespace {
-
-core::WaveformData generateDefaultWaveform(double durationSec, double bpm) {
-  core::WaveformData wf;
-  wf.sampleRate = 44100;
-  wf.samplesPerFrame = 512;
-  wf.channels = 2;
-
-  const int numFrames = static_cast<int>(std::max(10.0, durationSec) * 44100.0 / 512.0);
-  wf.overview.resize(static_cast<std::size_t>(numFrames));
-  wf.detail.resize(static_cast<std::size_t>(numFrames));
-
-  const double beatSec = (bpm > 20.0) ? (60.0 / bpm) : 0.5;
-  for (int i = 0; i < numFrames; ++i) {
-    const double t = static_cast<double>(i * 512) / 44100.0;
-    const double beatPhase = std::fmod(t, beatSec) / beatSec;
-    const float beatKick = (beatPhase < 0.2) ? static_cast<float>(1.0 - beatPhase / 0.2) : 0.0f;
-
-    const float low = std::clamp(beatKick * 0.9f + 0.1f, 0.0f, 1.0f);
-    const float mid = std::clamp(0.3f + 0.4f * static_cast<float>(std::sin(t * 8.0) * 0.5 + 0.5), 0.0f, 1.0f);
-    const float high = std::clamp(0.2f + 0.3f * static_cast<float>(std::cos(t * 16.0) * 0.5 + 0.5), 0.0f, 1.0f);
-
-    core::WaveformPoint pt;
-    pt.minLeft = -std::max({low, mid, high});
-    pt.maxLeft = std::max({low, mid, high});
-    pt.minRight = pt.minLeft;
-    pt.maxRight = pt.maxLeft;
-    pt.lowEnergy = low;
-    pt.midEnergy = mid;
-    pt.highEnergy = high;
-
-    wf.overview[static_cast<std::size_t>(i)] = pt;
-    wf.detail[static_cast<std::size_t>(i)] = pt;
-  }
-  return wf;
-}
-
-}  // namespace
-
-MainComponent::MainComponent(const Theme& theme, core::CommandBus& bus,
-                             const core::AudioEngineStatsSource& stats,
-                             std::shared_ptr<core::ILibrarySource> librarySource)
+MainComponent::MainComponent(const Theme& theme, core::CommandBus& bus, const core::AudioEngineStatsSource& stats,
+                             std::shared_ptr<core::ILibrarySource> librarySource, core::ILiveEngineSource* live,
+                             const core::IDeckLoadSource* loads, core::IAutomixControl* automix)
     : theme_(theme),
       bus_(bus),
       stats_(stats),
+      live_(live),
+      loads_(loads),
+      automix_(automix),
+      librarySource_(librarySource),
+      preferences_(loadPreferences()),
+      taste_(loadTaste()),
       globalWaveform_(theme),
+      fxHits_(theme),
       deckA_(core::DeckId::A, theme),
       deckB_(core::DeckId::B, theme),
       deckC_(core::DeckId::C, theme),
       deckD_(core::DeckId::D, theme),
       mixer_(theme),
-      library_(std::move(librarySource), theme),
+      library_(librarySource, theme),  // a copy: librarySource_ is initialised after library_ (declaration order)
+      queue_(theme),
+      automixSettings_(theme),
+      waveformBar_(&mainLayout_, 1, false, theme),
+      mainBar_(&mainLayout_, 3, false, theme),
+      deckBarLeft_(&deckLayout_, 1, true, theme),
+      deckBarRight_(&deckLayout_, 3, true, theme),
+      automixBar_(&automixLayout_, 1, true, theme),
+      general_(theme, preferences_),
       audio_(theme, bus, stats),
       diagnostics_(theme) {
+  for (std::size_t i = 0; i < core::kDeckCount; ++i) {
+    telemetry_[i].deck = static_cast<core::DeckId>(i);
+  }
   setupTopBar();
   wireInteractions();
 
   // Settings Tabs (hidden by default)
   settingsTabs_.setColour(juce::TabbedComponent::backgroundColourId, theme_.background);
   settingsTabs_.setColour(juce::TabbedComponent::outlineColourId, theme_.textDim.withAlpha(0.3f));
-  settingsTabs_.addTab("Audio Device", theme_.panel, &audio_, false);
-  settingsTabs_.addTab("Hardware Diagnostics", theme_.panel, &diagnostics_, false);
+  general_.onLanguageChanged = [this] {
+    if (onLanguageChanged) onLanguageChanged();
+  };
+  general_.onPreferencesChanged = [this](const Preferences& changed) {
+    preferences_ = changed;
+    savePreferences(changed);
+    submit(core::SetMasterProcessing{changed.glue, changed.limiter});
+  };
+  submit(core::SetMasterProcessing{preferences_.glue, preferences_.limiter});  // the remembered choice, from the start
+  settingsTabs_.addTab(TRANS("General"), theme_.panel, &general_, false);
+  settingsTabs_.addTab(TRANS("Audio Device"), theme_.panel, &audio_, false);
+  settingsTabs_.addTab(TRANS("Hardware Diagnostics"), theme_.panel, &diagnostics_, false);
   settingsTabs_.setVisible(false);
   addChildComponent(settingsTabs_);
 
+  addAndMakeVisible(fxHits_);
   addAndMakeVisible(globalWaveform_);
   addAndMakeVisible(deckA_);
   addAndMakeVisible(deckB_);
@@ -79,11 +72,101 @@ MainComponent::MainComponent(const Theme& theme, core::CommandBus& bus,
   addChildComponent(deckD_);
   addAndMakeVisible(mixer_);
   addAndMakeVisible(library_);
+  addChildComponent(queue_);
+  automixView_.setViewedComponent(&automixSettings_, false);
+  automixView_.setScrollBarsShown(true, false);
+  addChildComponent(automixView_);
+  addChildComponent(automixBar_);
+  addAndMakeVisible(mainBar_);
+  addAndMakeVisible(waveformBar_);
+  addAndMakeVisible(deckBarLeft_);
+  addAndMakeVisible(deckBarRight_);
+
+  // Remembered choices: how to mix, and how big the blocks are.
+  layoutSizes_ = loadLayoutSizes();
+  core::MixProfile rememberedProfile = loadMixProfile();
+  rememberedProfile.favourites = favouritesOf(taste_);  // what the DJ keeps choosing by hand weighs in
+  automixSettings_.setProfile(rememberedProfile);
+  applyMixProfile(automixSettings_.profile());
+  automixSettings_.onTasteReset = [this] { resetTaste(); };
+  fxHits_.onHit = [this](core::FxHitType type, float level) { triggerFxHit(type, level); };
+  automixSettings_.onProfileChanged = [this](const core::MixProfile& profile) {
+    saveMixProfile(profile);
+    applyMixProfile(profile);
+  };
+  for (auto* bar : {&mainBar_, &waveformBar_, &deckBarLeft_, &deckBarRight_}) {
+    bar->onMoved = [this] { rememberLayout(); };
+  }
+  automixBar_.onMoved = [this] { rememberLayout(); };
+  // Right-click on an edge: that block goes back to its default size (0 = "use the default" in LayoutSizes).
+  const auto resetTo = [this](auto clear) {
+    return [this, clear] {
+      clear(layoutSizes_);
+      mainLayoutReady_ = deckLayoutReady_ = automixLayoutReady_ = false;
+      resized();
+      rememberLayout();
+    };
+  };
+  waveformBar_.onReset = resetTo([](LayoutSizes& s) { s.waveformHeight = 0; });
+  mainBar_.onReset = resetTo([](LayoutSizes& s) { s.bottomHeight = 0; });
+  const auto resetDecks = resetTo([this](LayoutSizes& s) {
+    (layoutMode_ == LayoutMode::FourDecks ? s.mixerWidth4 : s.mixerWidth2) = 0;
+    s.deckSplitPercent = 0;
+  });
+  deckBarLeft_.onReset = resetDecks;
+  deckBarRight_.onReset = resetDecks;
+  automixBar_.onReset = resetTo([](LayoutSizes& s) { s.automixSettingsWidth = 0; });
+  queue_.onTransitionChosen = [this](std::size_t row, std::optional<core::TransitionStyle> style) {
+    if (automix_ == nullptr || !automix_->setTransitionStyle(row, style)) {
+      showAutomixNotice(TRANS("That transition has already started and cannot be changed"));
+      return;
+    }
+    queue_.update(automix_->queue());
+    if (style.has_value()) {
+      onTransitionPicked(*style);
+    }
+  };
+  for (auto* tab : {&libraryTabBtn_, &queueTabBtn_}) {
+    tab->setClickingTogglesState(false);
+    tab->setColour(juce::TextButton::textColourOffId, theme_.textDim);
+    addAndMakeVisible(*tab);
+  }
+  libraryTabBtn_.onClick = [this] { setBottomTab(false); };
+  queueTabBtn_.onClick = [this] { setBottomTab(true); };
+  queue_.onMoveRequested = [this](std::size_t from, std::size_t to) {
+    if (automix_ != nullptr && !automix_->moveUpcoming(from, to)) {
+      notice_ = TRANS("That track cannot be moved: it has started or is being prepared").toStdString();
+      noticeTicks_ = 0;
+    }
+  };
+  queue_.onJumpToTransitionRequested = [this] {
+    if (automix_ == nullptr || !automix_->jumpToTransition()) {
+      notice_ = TRANS("Nothing to jump to: start Automix first").toStdString();
+      noticeTicks_ = 0;
+    }
+  };
+  library_.onMixNextRequested = [this](const core::TrackItem& track) {
+    if (automix_ == nullptr) {
+      return;
+    }
+    const std::string problem = automix_->mixNext(track.id);
+    if (!problem.empty()) {
+      notice_ = i18n::translateMessage(problem).toStdString();
+      noticeTicks_ = 0;
+    }
+  };
+  queue_.onRemoveRequested = [this](std::size_t index) {
+    if (automix_ != nullptr && !automix_->removeUpcoming(index)) {
+      notice_ = TRANS("That track cannot be removed: it has started or is being prepared").toStdString();
+      noticeTicks_ = 0;
+    }
+  };
+  setBottomTab(false);
 
   setLayoutMode(LayoutMode::TwoDecks);
 
   setSize(1280, 800);
-  startTimerHz(30);  // 30 Hz UI update and telemetry simulation
+  startTimerHz(30);  // 30 Hz: read the engine telemetry and repaint
 }
 
 MainComponent::~MainComponent() {
@@ -91,10 +174,7 @@ MainComponent::~MainComponent() {
 }
 
 void MainComponent::setupTopBar() {
-  titleLabel_.setFont(juce::FontOptions(22.0f, juce::Font::bold));
-  titleLabel_.setColour(juce::Label::textColourId, theme_.accent);
-  titleLabel_.setJustificationType(juce::Justification::centredLeft);
-  addAndMakeVisible(titleLabel_);
+  addAndMakeVisible(logo_);
 
   view2DecksBtn_.onClick = [this] { setLayoutMode(LayoutMode::TwoDecks); };
   addAndMakeVisible(view2DecksBtn_);
@@ -109,6 +189,32 @@ void MainComponent::setupTopBar() {
   recBtn_.setColour(juce::TextButton::textColourOnId, theme_.meterRed);
   addAndMakeVisible(recBtn_);
 
+  automixBtn_.setClickingTogglesState(true);
+  automixBtn_.setEnabled(automix_ != nullptr);
+  automixBtn_.setColour(juce::TextButton::buttonColourId, theme_.panel);
+  automixBtn_.setColour(juce::TextButton::buttonOnColourId, theme_.accent.withAlpha(0.35f));
+  automixBtn_.setColour(juce::TextButton::textColourOffId, theme_.text);
+  automixBtn_.setColour(juce::TextButton::textColourOnId, theme_.accent);
+  automixBtn_.setTooltip(TRANS("Mixes the analysed tracks of the library automatically"));
+  automixBtn_.onClick = [this] {
+    if (automix_ == nullptr) {
+      return;
+    }
+    if (automixBtn_.getToggleState()) {
+      if (automix_->start()) {
+        setBottomTab(true);  // show what the AI is about to play
+      } else {
+        automixBtn_.setToggleState(false, juce::dontSendNotification);
+        notice_ = i18n::translateMessage(automix_->telemetry().statusMessage).toStdString();
+        noticeTicks_ = 0;
+      }
+    } else {
+      automix_->stop();
+    }
+  };
+  addAndMakeVisible(automixBtn_);
+
+  recBtn_.onClick = [this] { submit(core::SetRecording{recBtn_.getToggleState()}); };
   settingsBtn_.setColour(juce::TextButton::buttonColourId, theme_.panel);
   settingsBtn_.setColour(juce::TextButton::textColourOffId, theme_.text);
   settingsBtn_.onClick = [this] { setSettingsVisible(!showSettings_); };
@@ -123,6 +229,9 @@ void MainComponent::setupTopBar() {
 void MainComponent::setLayoutMode(LayoutMode mode) {
   layoutMode_ = mode;
   const bool fourDecks = (mode == LayoutMode::FourDecks);
+  if (automix_ != nullptr) {
+    automix_->setVisibleDeckCount(fourDecks ? 4 : 2);  // a live mix never lands on a deck that is switched off
+  }
 
   view2DecksBtn_.setColour(juce::TextButton::buttonColourId,
                            !fourDecks ? theme_.panel.brighter(0.2f) : theme_.panel);
@@ -134,8 +243,10 @@ void MainComponent::setLayoutMode(LayoutMode mode) {
   view4DecksBtn_.setColour(juce::TextButton::textColourOffId,
                            fourDecks ? theme_.accent : theme_.textDim);
 
-  deckC_.setVisible(fourDecks);
-  deckD_.setVisible(fourDecks);
+  mainLayoutReady_ = false;  // each layout has its own default heights and widths
+  deckLayoutReady_ = false;
+  applyVisibility();
+  library_.setFourDecks(fourDecks);
 
   globalWaveform_.setLayoutMode(fourDecks ? GlobalWaveformComponent::LayoutMode::FourDecks
                                           : GlobalWaveformComponent::LayoutMode::TwoDecks);
@@ -146,165 +257,522 @@ void MainComponent::setLayoutMode(LayoutMode mode) {
   repaint();
 }
 
-void MainComponent::wireDeck(DeckComponent& deck, core::DeckTelemetry& telem, core::DeckId id) {
-  deck.onPlayClicked = [this, &deck, &telem, id](core::DeckId) {
-    telem.isPlaying = true;
-    deck.updateTelemetry(telem);
-    globalWaveform_.updateTelemetry(id, telem);
-    (void)bus_.submit(core::Play{id}, origin_);
-  };
+void MainComponent::submit(const core::Command& command) {
+  if (const auto error = bus_.submit(command, origin_)) {
+    notice_ = std::string(core::commandName(command)) + ": " + error->message;
+  }
+}
 
-  deck.onPauseClicked = [this, &deck, &telem, id](core::DeckId) {
-    telem.isPlaying = false;
-    deck.updateTelemetry(telem);
-    globalWaveform_.updateTelemetry(id, telem);
-    (void)bus_.submit(core::Pause{id}, origin_);
-  };
+void MainComponent::requestLoad(const core::TrackItem& track, core::DeckId id) {
+  if (track.id <= 0) {
+    return;  // only tracks the library knows can be loaded
+  }
+  const auto i = core::index(id);
+  loadedTrack_[i] = track;
+  if (librarySource_ != nullptr) {
+    if (const auto detail = librarySource_->findTrack(track.id)) {
+      loadedTrack_[i] = *detail;  // includes the beat grid anchor, which the list rows do not carry
+    }
+  }
+  telemetry_[i] = core::DeckTelemetry{};
+  telemetry_[i].deck = id;
+  hasPendingLoopIn_[i] = false;
+  refreshMarkers(id);
 
-  deck.onCueClicked = [this, &deck, &telem, id](core::DeckId) {
-    telem.isPlaying = false;
-    telem.currentTimeSec = 0.0;
-    deck.updateTelemetry(telem);
-    globalWaveform_.updateTelemetry(id, telem);
-    (void)bus_.submit(core::Cue{id}, origin_);
-  };
+  deck(id).setTrack(track, {});
+  globalWaveform_.setWaveformData(id, {});
+  submit(core::LoadTrack{id, core::TrackId{track.id}});
+}
 
-  deck.onSeekRequested = [this, &deck, &telem, id](core::DeckId, double sec) {
-    telem.currentTimeSec = sec;
-    deck.updateTelemetry(telem);
-    globalWaveform_.updateTelemetry(id, telem);
-  };
+void MainComponent::setBeatLoop(core::DeckId id, double beats) {
+  const double bpm = loadedTrack_[core::index(id)].bpm;
+  if (bpm <= 0.0) {
+    notice_ = TRANS("Beat loops need a BPM: this track has not been analysed yet").toStdString();
+    return;
+  }
+  const double start = telemetry(id).currentTimeSec;
+  submit(core::SetLoop{id, start, start + beats * 60.0 / bpm, true});
+}
 
-  deck.onPitchChanged = [&telem](core::DeckId, double speed) {
-    telem.playbackSpeed = speed;
-  };
+void MainComponent::requestScratch(core::DeckId id, core::ScratchPattern pattern, double beats) {
+  const auto i = core::index(id);
+  const double bpm = loadedTrack_[i].bpm;
+  if (bpm <= 0.0) {
+    showAutomixNotice(TRANS("Scratches need a BPM: this track has not been analysed yet"));
+    return;
+  }
+  if (!telemetry_[i].isPlaying) {
+    showAutomixNotice(TRANS("Scratches need a playing deck"));
+    return;
+  }
+  const double speed = telemetry_[i].playbackSpeed > 0.0 ? telemetry_[i].playbackSpeed : 1.0;
+  submit(core::Scratch{id, pattern, beats, 60.0 / (bpm * speed)});
+}
 
-  deck.onHotCueClicked = [this, &deck, &telem, id](core::DeckId, int cueIdx) {
-    if (cueIdx >= 0 && cueIdx < 8) {
-      if (!telem.hotCues[static_cast<std::size_t>(cueIdx)].has_value()) {
-        core::CuePointTelemetry cue;
-        cue.index = cueIdx + 1;
-        cue.timeSec = telem.currentTimeSec;
-        cue.name = "Cue " + std::to_string(cueIdx + 1);
-        cue.color = "#00D2FF";
-        telem.hotCues[static_cast<std::size_t>(cueIdx)] = cue;
-      } else {
-        telem.currentTimeSec = telem.hotCues[static_cast<std::size_t>(cueIdx)]->timeSec;
-      }
-      deck.updateTelemetry(telem);
-      globalWaveform_.updateTelemetry(id, telem);
+void MainComponent::onTransitionPicked(core::TransitionStyle style) {
+  recordChoice(taste_, style);
+  saveTaste(taste_);
+  core::MixProfile profile = automixSettings_.profile();
+  const auto favourites = favouritesOf(taste_);
+  if (profile.favourites != favourites) {  // a style reached its third pick: the Automix favours it from now on
+    profile.favourites = favourites;
+    automixSettings_.setProfile(profile);
+    applyMixProfile(profile);
+  }
+}
+
+void MainComponent::resetTaste() {
+  taste_.clear();
+  saveTaste(taste_);
+  core::MixProfile profile = automixSettings_.profile();
+  profile.favourites.clear();
+  automixSettings_.setProfile(profile);
+  applyMixProfile(profile);
+}
+
+void MainComponent::showDeckFx(core::DeckId id, juce::Component& target) {
+  auto panel = std::make_unique<DeckFxPanel>(id, theme_);
+  panel->onSlotChanged = [this](core::DeckId d, int slot, const core::FxSlotState& fx) {
+    submit(core::SetFx{d, slot, fx.type, fx.enabled, fx.wet, fx.param, fx.tailAfterFader});
+  };
+  panel->syncFromState(bus_.state()->deck(id));
+  openFxPanel_ = panel.get();
+  juce::CallOutBox::launchAsynchronously(std::move(panel), target.getScreenBounds(), nullptr);
+}
+
+void MainComponent::triggerFxHit(core::FxHitType type, float level) {
+  std::array<DeckBeat, core::kDeckCount> beats{};
+  for (std::size_t i = 0; i < beats.size(); ++i) {
+    beats[i] = {telemetry_[i].isPlaying, loadedTrack_[i].bpm, telemetry_[i].playbackSpeed};
+  }
+  const std::size_t visible = layoutMode_ == LayoutMode::FourDecks ? 4 : 2;  // a hidden deck is not the DJ's tempo
+  submit(core::TriggerFxHit{type, level, fxHitBeatSeconds(std::span<const DeckBeat>(beats.data(), visible))});
+}
+
+void MainComponent::applyLoudnessTrim(core::DeckId id) {
+  const auto trim = loudnessTrimDb(loadedTrack_[core::index(id)].loudnessLufs);
+  if (preferences_.autoLoudness && trim.has_value()) {
+    submit(core::SetTrackGainTrim{id, *trim});
+  }
+}
+
+void MainComponent::pollFxTempo(core::DeckId id, const core::LiveDeckState& engineDeck) {
+  if (!engineDeck.hasTrack) {
+    return;
+  }
+  const auto i = core::index(id);
+  if (const auto beat = fxTempo_[i].update(loadedTrack_[i].bpm, engineDeck.playbackSpeed, ticks_)) {
+    submit(core::SetFxTempo{id, *beat});
+  }
+}
+
+void MainComponent::wireDeckSound(DeckComponent& deckView) {
+  deckView.onKeylockChanged = [this](core::DeckId d, bool enabled) { submit(core::SetKeylock{d, enabled}); };
+  deckView.onKeyShiftChanged = [this](core::DeckId d, float semitones) { submit(core::SetKeyShift{d, semitones}); };
+  deckView.onFxButtonClicked = [this](core::DeckId d, juce::Component& target) { showDeckFx(d, target); };
+}
+
+void MainComponent::wireDeck(DeckComponent& deckView, core::DeckId id) {
+  wireDeckSound(deckView);
+  deckView.onPlayClicked = [this](core::DeckId d) { submit(core::Play{d}); };
+  deckView.onPauseClicked = [this](core::DeckId d) { submit(core::Pause{d}); };
+  deckView.onCueClicked = [this](core::DeckId d) { submit(core::Cue{d}); };
+  deckView.onSyncClicked = [this](core::DeckId d) { submit(core::Sync{d}); };
+  deckView.onSeparateStemsClicked = [this](core::DeckId d) { submit(core::SeparateStems{d}); };
+  deckView.onMarkerAddRequested = [this](core::DeckId d, const std::string& type) { addMarker(d, type); };
+  deckView.onMarkerRemoveNearestRequested = [this](core::DeckId d) { removeNearestMarker(d); };
+  deckView.onScratchRequested = [this](core::DeckId d, core::ScratchPattern pattern, double beats) {
+    requestScratch(d, pattern, beats);
+  };
+  deckView.onSeekRequested = [this](core::DeckId d, double sec) { submit(core::Seek{d, sec}); };
+  deckView.onPitchChanged = [this](core::DeckId d, double speed) { submit(core::SetPlaybackSpeed{d, speed}); };
+  deckView.onGainChanged = [this](core::DeckId d, float gainDb) { submit(core::SetGain{d, gainDb}); };
+
+  // Hot cues are view state for now (not persisted): an empty slot stores the real playhead, a set slot jumps to it.
+  deckView.onHotCueClicked = [this](core::DeckId d, int cueIdx) {
+    if (cueIdx < 0 || cueIdx >= 8) {
+      return;
+    }
+    auto& telem = telemetry(d);
+    auto& slot = telem.hotCues[static_cast<std::size_t>(cueIdx)];
+    if (!telem.hasTrack) {
+      return;
+    }
+    if (!slot.has_value()) {
+      core::CuePointTelemetry cue;
+      cue.index = cueIdx + 1;
+      cue.timeSec = telem.currentTimeSec;
+      cue.name = TRANS("Cue").toStdString() + " " + std::to_string(cueIdx + 1);
+      cue.color = "#00D2FF";
+      slot = cue;
+    } else {
+      submit(core::Seek{d, slot->timeSec});
     }
   };
 
-  deck.onLoopToggleClicked = [this, &deck, &telem, id](core::DeckId) {
-    telem.loop.active = !telem.loop.active;
-    if (telem.loop.active) {
-      telem.loop.startTimeSec = telem.currentTimeSec;
-      const double intSec = telem.beatgrid.beatIntervalSec > 0.0 ? telem.beatgrid.beatIntervalSec : 0.5;
-      telem.loop.endTimeSec = telem.currentTimeSec + intSec * 4.0;
+  deckView.onLoopInClicked = [this](core::DeckId d) {
+    pendingLoopIn_[core::index(d)] = telemetry(d).currentTimeSec;
+    hasPendingLoopIn_[core::index(d)] = true;
+  };
+  deckView.onLoopOutClicked = [this](core::DeckId d) {
+    const auto i = core::index(d);
+    const double out = telemetry(d).currentTimeSec;
+    if (hasPendingLoopIn_[i] && out > pendingLoopIn_[i]) {
+      submit(core::SetLoop{d, pendingLoopIn_[i], out, true});
     }
-    deck.updateTelemetry(telem);
-    globalWaveform_.updateTelemetry(id, telem);
   };
-
-  deck.onBeatLoopClicked = [this, &deck, &telem, id](core::DeckId, double beats) {
-    telem.loop.active = true;
-    telem.loop.startTimeSec = telem.currentTimeSec;
-    const double intSec = telem.beatgrid.beatIntervalSec > 0.0 ? telem.beatgrid.beatIntervalSec : 0.5;
-    telem.loop.endTimeSec = telem.currentTimeSec + intSec * beats;
-    deck.updateTelemetry(telem);
-    globalWaveform_.updateTelemetry(id, telem);
+  deckView.onLoopToggleClicked = [this](core::DeckId d) {
+    const auto state = bus_.state();
+    const auto& loop = state->deck(d).loop;
+    if (loop.endSeconds > loop.startSeconds) {
+      submit(core::SetLoop{d, loop.startSeconds, loop.endSeconds, !loop.active});
+    }
   };
+  deckView.onBeatLoopClicked = [this](core::DeckId d, double beats) { setBeatLoop(d, beats); };
 
-  deck.onGainChanged = [this, id](core::DeckId, float gainDb) {
-    (void)bus_.submit(core::SetGain{id, gainDb}, origin_);
-  };
-
-  deck.onStemVolumeChanged = [this, id](core::DeckId, int stemIdx, float vol) {
+  deckView.onStemVolumeChanged = [this, id](core::DeckId, int stemIdx, float vol) {
     if (stemIdx >= 0 && stemIdx < static_cast<int>(core::kStemKindCount)) {
-      (void)bus_.submit(core::SetStemVolume{id, static_cast<core::StemKind>(stemIdx), vol}, origin_);
+      submit(core::SetStemVolume{id, static_cast<core::StemKind>(stemIdx), vol});
     }
   };
-
-  deck.onStemMuteChanged = [this, id](core::DeckId, int stemIdx, bool muted) {
+  deckView.onStemMuteChanged = [this, id](core::DeckId, int stemIdx, bool muted) {
     if (stemIdx >= 0 && stemIdx < static_cast<int>(core::kStemKindCount)) {
-      (void)bus_.submit(core::SetStemMute{id, static_cast<core::StemKind>(stemIdx), muted}, origin_);
+      submit(core::SetStemMute{id, static_cast<core::StemKind>(stemIdx), muted});
     }
   };
 }
 
 void MainComponent::wireInteractions() {
-  // 1. Library -> Load Track into any of the 4 decks
+  // 1. Library -> load a track into any of the 4 decks
   library_.onTrackLoadRequested = [this](const core::TrackItem& track, core::DeckId targetDeck) {
-    const auto wf = generateDefaultWaveform(track.durationSec, track.bpm);
-    auto& target = deck(targetDeck);
-    auto& telem = (targetDeck == core::DeckId::A)
-                      ? telemetryA_
-                      : ((targetDeck == core::DeckId::B)
-                             ? telemetryB_
-                             : ((targetDeck == core::DeckId::C) ? telemetryC_ : telemetryD_));
-
-    telem.hasTrack = true;
-    telem.isPlaying = false;
-    telem.currentTimeSec = 0.0;
-    telem.durationSec = track.durationSec > 0.0 ? track.durationSec : 180.0;
-    telem.beatgrid.bpm = track.bpm > 0.0 ? track.bpm : 174.0;
-    telem.beatgrid.beatIntervalSec = 60.0 / telem.beatgrid.bpm;
-    telem.beatgrid.firstBeatTimeSec = 0.0;
-
-    target.setTrack(track, wf);
-    target.updateTelemetry(telem);
-    globalWaveform_.setWaveformData(targetDeck, wf);
-    globalWaveform_.updateTelemetry(targetDeck, telem);
-
-    const auto tid = (track.id > 0) ? core::TrackId{track.id} : core::TrackId{1};
-    (void)bus_.submit(core::LoadTrack{targetDeck, tid}, origin_);
+    requestLoad(track, targetDeck);
   };
 
-  // 2. Global Waveform Seeking
+  // 2. Global waveform seeking
   globalWaveform_.onSeekRequested = [this](core::DeckId targetDeck, double sec) {
-    auto& telem = (targetDeck == core::DeckId::A)
-                      ? telemetryA_
-                      : ((targetDeck == core::DeckId::B)
-                             ? telemetryB_
-                             : ((targetDeck == core::DeckId::C) ? telemetryC_ : telemetryD_));
-    telem.currentTimeSec = sec;
-    auto& d = deck(targetDeck);
-    d.updateTelemetry(telem);
-    globalWaveform_.updateTelemetry(targetDeck, telem);
+    submit(core::Seek{targetDeck, sec});
   };
 
-  // 3. Decks A, B, C, D Controls
-  wireDeck(deckA_, telemetryA_, core::DeckId::A);
-  wireDeck(deckB_, telemetryB_, core::DeckId::B);
-  wireDeck(deckC_, telemetryC_, core::DeckId::C);
-  wireDeck(deckD_, telemetryD_, core::DeckId::D);
+  // 3. Decks A, B, C, D
+  wireDeck(deckA_, core::DeckId::A);
+  wireDeck(deckB_, core::DeckId::B);
+  wireDeck(deckC_, core::DeckId::C);
+  wireDeck(deckD_, core::DeckId::D);
 
-  // 4. Mixer Controls -> CommandBus
-  mixer_.onGainChanged = [this](core::DeckId id, float db) {
-    (void)bus_.submit(core::SetGain{id, db}, origin_);
-  };
-  mixer_.onEqChanged = [this](core::DeckId id, core::EqBand band, float db) {
-    (void)bus_.submit(core::SetEq{id, band, db}, origin_);
-  };
-  mixer_.onVolumeChanged = [this](core::DeckId id, float lin) {
-    (void)bus_.submit(core::SetVolume{id, lin}, origin_);
-  };
-  mixer_.onCueChanged = [this](core::DeckId id, bool enabled) {
-    (void)bus_.submit(core::SetDeckCue{id, enabled}, origin_);
-  };
-  mixer_.onCrossfaderChanged = [this](float position) {
-    (void)bus_.submit(core::SetCrossfader{position}, origin_);
-  };
-  mixer_.onCrossfaderCurveChanged = [this](core::CrossfaderCurve curve) {
-    (void)bus_.submit(core::SetCrossfaderCurve{curve}, origin_);
-  };
+  // 4. Mixer controls -> CommandBus
+  mixer_.onGainChanged = [this](core::DeckId id, float db) { submit(core::SetGain{id, db}); };
+  mixer_.onFilterChanged = [this](core::DeckId id, float position) { submit(core::SetFilter{id, position}); };
+  mixer_.onEqChanged = [this](core::DeckId id, core::EqBand band, float db) { submit(core::SetEq{id, band, db}); };
+  mixer_.onVolumeChanged = [this](core::DeckId id, float lin) { submit(core::SetVolume{id, lin}); };
+  mixer_.onCueChanged = [this](core::DeckId id, bool enabled) { submit(core::SetDeckCue{id, enabled}); };
+  mixer_.onCrossfaderChanged = [this](float position) { submit(core::SetCrossfader{position}); };
+  mixer_.onCrossfaderCurveChanged = [this](core::CrossfaderCurve curve) { submit(core::SetCrossfaderCurve{curve}); };
   mixer_.onCrossfaderAssignChanged = [this](core::DeckId id, core::CrossfaderAssign assign) {
-    (void)bus_.submit(core::SetCrossfaderAssign{id, assign}, origin_);
+    submit(core::SetCrossfaderAssign{id, assign});
   };
-  mixer_.onMasterGainChanged = [this](float gainDb) {
-    (void)bus_.submit(core::SetMasterGain{gainDb}, origin_);
-  };
+  mixer_.onMasterGainChanged = [this](float gainDb) { submit(core::SetMasterGain{gainDb}); };
+}
+
+void MainComponent::pollLoadStatus(core::DeckId id) {
+  if (loads_ == nullptr) {
+    return;
+  }
+  const auto i = core::index(id);
+  const core::DeckLoadStatus status = loads_->loadStatus(id);
+  const bool changed = status.generation != shownLoadGeneration_[i];
+
+  // A track can arrive without a click on the library (Automix, MIDI, the AI): the deck header follows the engine.
+  // Retried until it succeeds (a busy library database must not leave the header on "No Track Loaded" for good).
+  if (status.track.isValid() && status.track.value != loadedTrack_[i].id && librarySource_ != nullptr &&
+      (changed || ticks_ % 15 == 0)) {
+    try {
+      if (const auto track = librarySource_->findTrack(status.track.value)) {
+        loadedTrack_[i] = *track;
+        telemetry_[i].hotCues = {};
+        hasPendingLoopIn_[i] = false;
+        deck(id).updateTrackInfo(*track);
+        refreshMarkers(id);
+      }
+    } catch (const std::exception&) {
+      // tried again on a later tick
+    }
+  }
+  // A loaded track gets its loudness trim once per load, whoever loaded it (library, Automix, MIDI, the AI). Waits for
+  // the library row when it could not be read yet.
+  if (status.phase == core::DeckLoadPhase::Ready && status.generation != trimmedGeneration_[i] &&
+      status.track.isValid() && loadedTrack_[i].id == status.track.value) {
+    trimmedGeneration_[i] = status.generation;
+    applyLoudnessTrim(id);
+    // Stems ahead of time: the stem controls then work the moment the DJ reaches for them (once per track).
+    if (preferences_.autoStems && status.stemPhase == core::StemPhase::None && stemsRequested_[i] != status.track.value) {
+      stemsRequested_[i] = status.track.value;
+      submit(core::SeparateStems{id});
+    }
+  }
+  if (!changed) {
+    return;
+  }
+  shownLoadGeneration_[i] = status.generation;
+  deck(id).setStemStatus(status.stemPhase, status.stemProgress, status.stemMessage);
+
+  switch (status.phase) {
+    case core::DeckLoadPhase::Ready:
+      if (status.waveform != nullptr) {
+        deck(id).setWaveformData(*status.waveform);
+        globalWaveform_.setWaveformData(id, *status.waveform);
+      }
+      break;
+    case core::DeckLoadPhase::Failed: {
+      core::TrackItem failed;
+      failed.title = TRANS("Load failed").toStdString();
+      failed.artist = i18n::translateMessage(status.message).toStdString();
+      deck(id).setTrack(failed, {});
+      globalWaveform_.setWaveformData(id, {});
+      break;
+    }
+    case core::DeckLoadPhase::Loading:
+    case core::DeckLoadPhase::Empty:
+      break;
+  }
+}
+
+namespace {
+
+const char* markerLabel(const std::string& type) {
+  if (type == "mix_in") return "MIX IN";
+  if (type == "mix_out") return "MIX OUT";
+  if (type == "drop") return "DROP";
+  if (type == "break") return "BREAK";
+  if (type == "intro") return "INTRO";
+  if (type == "outro") return "OUTRO";
+  return "MARK";
+}
+
+const char* markerColour(const std::string& type) {
+  if (type == "mix_in") return "#00FF88";
+  if (type == "mix_out") return "#FFCC00";
+  if (type == "drop") return "#FF3366";
+  if (type == "break") return "#3399FF";
+  if (type == "intro") return "#66D9A8";
+  if (type == "outro") return "#FFAA33";
+  return "#00D2FF";
+}
+
+}  // namespace
+
+void MainComponent::refreshMarkers(core::DeckId id) {
+  const auto i = core::index(id);
+  telemetry_[i].markers.clear();
+  if (librarySource_ == nullptr || loadedTrack_[i].id <= 0) {
+    return;
+  }
+  for (const core::TrackMarker& marker : librarySource_->markers(loadedTrack_[i].id)) {
+    core::CuePointTelemetry cue;
+    cue.index = marker.id;
+    cue.timeSec = marker.timeSec;
+    cue.type = marker.type;
+    cue.color = markerColour(marker.type);
+    cue.name = juce::translate(markerLabel(marker.type)).toStdString() + (marker.source == "auto" ? " (AI)" : "");
+    telemetry_[i].markers.push_back(std::move(cue));
+  }
+}
+
+void MainComponent::addMarker(core::DeckId id, const std::string& type) {
+  const auto i = core::index(id);
+  const core::TrackItem& track = loadedTrack_[i];
+  if (librarySource_ == nullptr || track.id <= 0 || !telemetry_[i].hasTrack) {
+    return;
+  }
+  double position = telemetry_[i].currentTimeSec;
+  if (track.bpm > 0.0) {  // marks sit on the beat grid, like the AI's own
+    const double period = 60.0 / track.bpm;
+    position = track.firstBeatSec + std::round((position - track.firstBeatSec) / period) * period;
+    position = std::max(0.0, position);
+  }
+  core::TrackMarker marker;
+  marker.type = type;
+  marker.timeSec = position;
+  marker.name = markerLabel(type);
+  if (librarySource_->setMarker(track.id, marker) == 0) {
+    notice_ = TRANS("Could not save the marker").toStdString();
+    noticeTicks_ = 0;
+    return;
+  }
+  refreshMarkers(id);
+}
+
+void MainComponent::removeNearestMarker(core::DeckId id) {
+  const auto i = core::index(id);
+  if (librarySource_ == nullptr || loadedTrack_[i].id <= 0 || telemetry_[i].markers.empty()) {
+    return;
+  }
+  const double now = telemetry_[i].currentTimeSec;
+  const core::CuePointTelemetry* nearest = &telemetry_[i].markers.front();
+  for (const auto& marker : telemetry_[i].markers) {
+    if (std::abs(marker.timeSec - now) < std::abs(nearest->timeSec - now)) {
+      nearest = &marker;
+    }
+  }
+  librarySource_->removeMarker(loadedTrack_[i].id, nearest->index);
+  refreshMarkers(id);
+}
+
+void MainComponent::pollAutomix() {
+  if (automix_ == nullptr) {
+    return;
+  }
+  if (showQueue_ && ticks_ % 15 == 0) {
+    queue_.update(automix_->queue());
+  }
+  const core::AutonomousDjTelemetry t = automix_->telemetry();
+  const bool active =
+      t.status == core::AutonomousDjStatus::Running || t.status == core::AutonomousDjStatus::Paused;
+  automixBtn_.setToggleState(active, juce::dontSendNotification);
+
+  if (active) {
+    automixText_ = TRANS("AUTOMIX").toStdString() + " " + std::to_string(t.currentTrackIndex) + "/" +
+                   std::to_string(t.totalTracksInSet) + " | " +
+                   i18n::translateMessage(t.statusMessage).toStdString();
+  } else {
+    automixText_.clear();
+  }
+  if (t.status == core::AutonomousDjStatus::Error && lastAutomixStatus_ != core::AutonomousDjStatus::Error) {
+    notice_ = i18n::translateMessage(t.statusMessage).toStdString();  // e.g. a track failed to load
+    noticeTicks_ = 0;
+  }
+  lastAutomixStatus_ = t.status;
+}
+
+void MainComponent::applyMixProfile(const core::MixProfile& profile) {
+  if (automix_ != nullptr) {
+    automix_->setMixProfile(profile);
+  }
+}
+
+void MainComponent::showAutomixNotice(const juce::String& text) {
+  notice_ = text.toStdString();
+  noticeTicks_ = 0;
+}
+
+void MainComponent::pollTransitions() {
+  // Where the next mix loops, scratches and drops, on each track: a few times a second is plenty for a planned thing.
+  if (automix_ == nullptr || ticks_ % 8 != 0) {
+    return;
+  }
+  const core::TransitionPreview preview = automix_->transitionPreview();
+  std::array<std::vector<core::TransitionRegion>, core::kDeckCount> perDeck;
+  for (const core::TransitionRegion& region : preview.regions) {
+    perDeck[core::index(region.deck)].push_back(region);
+  }
+  for (std::size_t i = 0; i < core::kDeckCount; ++i) {
+    const auto id = static_cast<core::DeckId>(i);
+    deck(id).setTransitionRegions(perDeck[i]);
+    globalWaveform_.setTransitionRegions(id, perDeck[i]);
+  }
+}
+
+void MainComponent::pollLibraryStatus() {
+  library_.updateScanStatus();
+}
+
+void MainComponent::timerCallback() {
+  const auto state = bus_.state();
+  core::LiveEngineState live;
+  if (live_ != nullptr) {
+    live = live_->liveState();
+  }
+
+  pollAutomix();
+  pollTransitions();
+  recBtn_.setToggleState(state->recording, juce::dontSendNotification);  // the state, not the click, is the truth
+
+  std::array<std::pair<float, float>, core::kDeckCount> peaks{};
+  for (std::size_t i = 0; i < core::kDeckCount; ++i) {
+    const auto id = static_cast<core::DeckId>(i);
+    pollLoadStatus(id);
+
+    const core::LiveDeckState& engineDeck = live.decks[i];
+    const core::DeckState& intent = state->decks[i];
+    core::DeckTelemetry& telem = telemetry_[i];
+    telem.hasTrack = engineDeck.hasTrack;
+    telem.isPlaying = engineDeck.isPlaying;
+    telem.currentTimeSec = engineDeck.positionSec;
+    telem.durationSec = engineDeck.durationSec;
+    telem.playbackSpeed = engineDeck.playbackSpeed;  // the real speed: a sync moves it behind the user's back
+    telem.vuLevelLeft = engineDeck.peakLeft;
+    telem.vuLevelRight = engineDeck.peakRight;
+    telem.hasStems = engineDeck.hasStems;
+    telem.loop.active = intent.loop.active;
+    telem.loop.startTimeSec = intent.loop.startSeconds;
+    telem.loop.endTimeSec = intent.loop.endSeconds;
+    const core::TrackItem& row = loadedTrack_[i];
+    telem.beatgrid.bpm = row.bpm;  // from analysis; 0 until the track has been analysed
+    telem.beatgrid.firstBeatTimeSec = row.firstBeatSec;
+    telem.beatgrid.beatIntervalSec = row.bpm > 0.0 ? 60.0 / row.bpm : 0.0;
+
+    pollFxTempo(id, engineDeck);
+    deck(id).updateTelemetry(telem);
+    deck(id).syncFromState(intent);
+    if (openFxPanel_ != nullptr && openFxPanel_->deckId() == id) {
+      openFxPanel_->syncFromState(intent);
+    }
+    globalWaveform_.updateTelemetry(id, telem);
+    peaks[i] = {engineDeck.peakLeft, engineDeck.peakRight};
+  }
+
+  mixer_.syncFromState(*state);  // Automix, MIDI and the AI move the same Commands: show them
+
+  if (layoutMode_ == LayoutMode::FourDecks) {
+    mixer_.updateMeters(peaks, live.masterPeakLeft, live.masterPeakRight);
+  } else {
+    mixer_.updateMeters(peaks[0].first, peaks[0].second, peaks[1].first, peaks[1].second, live.masterPeakLeft,
+                        live.masterPeakRight);
+  }
+
+  // Library: scan progress and new tracks, twice a second; pick up tempo and key as analysis finishes.
+  if (ticks_ % 60 == 30) {  // the AI's marker proposals arrive while the analysis runs
+    for (std::size_t i = 0; i < core::kDeckCount; ++i) {
+      if (loadedTrack_[i].id > 0) {
+        refreshMarkers(static_cast<core::DeckId>(i));
+      }
+    }
+  }
+  if (++ticks_ % 15 == 0) {
+    pollLibraryStatus();
+    for (std::size_t i = 0; i < core::kDeckCount; ++i) {
+      if (librarySource_ != nullptr && loadedTrack_[i].id > 0 && loadedTrack_[i].bpm <= 0.0) {
+        if (const auto fresh = librarySource_->findTrack(loadedTrack_[i].id); fresh && fresh->bpm > 0.0) {
+          loadedTrack_[i] = *fresh;
+          deck(static_cast<core::DeckId>(i)).updateTrackInfo(*fresh);
+        }
+      }
+    }
+  }
+  if (live.noticeSerial != shownNoticeSerial_) {
+    shownNoticeSerial_ = live.noticeSerial;
+    notice_ = i18n::translateMessage(live.notice).toStdString();
+    noticeTicks_ = 0;
+  }
+
+  // Status line: a rejected command wins for a couple of seconds, then the engine figures.
+  const auto engineStats = stats_.stats();
+  if (!notice_.empty()) {
+    statsLabel_.setText(notice_, juce::dontSendNotification);
+    if (++noticeTicks_ > 150) {  // about five seconds
+      notice_.clear();
+    }
+  } else if (automix_ != nullptr && !automix_->liveMixStatus().empty()) {
+    statsLabel_.setText(i18n::translateMessage(automix_->liveMixStatus()), juce::dontSendNotification);
+  } else if (!automixText_.empty()) {
+    statsLabel_.setText(automixText_, juce::dontSendNotification);
+  } else {
+    statsLabel_.setText(juce::String(TRANS("DSP: %cpu% | SR: %sr% Hz | xruns: %xr% | dropped: %dr%"))
+                            .replace("%cpu%", juce::String(engineStats.cpuLoad * 100.0, 1) + "%")
+                            .replace("%sr%", juce::String(engineStats.sampleRate, 0))
+                            .replace("%xr%", juce::String(engineStats.xrunCount))
+                            .replace("%dr%", juce::String(static_cast<juce::int64>(live.droppedMessages))),
+                        juce::dontSendNotification);
+  }
 }
 
 DeckComponent& MainComponent::deck(core::DeckId id) {
@@ -329,160 +797,70 @@ void MainComponent::showHardwareReport(const core::HardwareReport& report) {
 void MainComponent::setTheme(const Theme& theme) {
   theme_ = theme;
   globalWaveform_.setTheme(theme);
+  fxHits_.setTheme(theme);
   deckA_.setTheme(theme);
   deckB_.setTheme(theme);
   deckC_.setTheme(theme);
   deckD_.setTheme(theme);
   mixer_.setTheme(theme);
   library_.setTheme(theme);
+  queue_.setTheme(theme);
+  automixSettings_.setTheme(theme);
+  mainBar_.setTheme(theme);
+  waveformBar_.setTheme(theme);
+  deckBarLeft_.setTheme(theme);
+  deckBarRight_.setTheme(theme);
+  automixBar_.setTheme(theme);
   repaint();
+}
+
+void MainComponent::applyVisibility() {
+  // The settings panel replaces the workstation: the decks must not stay visible (and clickable) behind it.
+  const bool workstation = !showSettings_;
+  const bool fourDecks = layoutMode_ == LayoutMode::FourDecks;
+  globalWaveform_.setVisible(workstation);
+  fxHits_.setVisible(workstation);
+  deckA_.setVisible(workstation);
+  deckB_.setVisible(workstation);
+  deckC_.setVisible(workstation && fourDecks);
+  deckD_.setVisible(workstation && fourDecks);
+  mixer_.setVisible(workstation);
+  library_.setVisible(workstation && !showQueue_);
+  queue_.setVisible(workstation && showQueue_);
+  automixView_.setVisible(workstation && showQueue_);
+  automixBar_.setVisible(workstation && showQueue_);
+  mainBar_.setVisible(workstation);
+  waveformBar_.setVisible(workstation);
+  deckBarLeft_.setVisible(workstation);
+  deckBarRight_.setVisible(workstation);
+  libraryTabBtn_.setVisible(workstation);
+  queueTabBtn_.setVisible(workstation);
+  settingsTabs_.setVisible(showSettings_);
+  if (showSettings_) {
+    settingsTabs_.toFront(false);
+  }
+}
+
+void MainComponent::setBottomTab(bool showQueue) {
+  showQueue_ = showQueue;
+  libraryTabBtn_.setColour(juce::TextButton::buttonColourId, showQueue ? theme_.panel : theme_.panel.brighter(0.25f));
+  queueTabBtn_.setColour(juce::TextButton::buttonColourId, showQueue ? theme_.panel.brighter(0.25f) : theme_.panel);
+  libraryTabBtn_.setColour(juce::TextButton::textColourOffId, showQueue ? theme_.textDim : theme_.accent);
+  queueTabBtn_.setColour(juce::TextButton::textColourOffId, showQueue ? theme_.accent : theme_.textDim);
+  if (showQueue && automix_ != nullptr) {
+    queue_.update(automix_->queue());
+  }
+  applyVisibility();
+  resized();
 }
 
 void MainComponent::setSettingsVisible(bool visible) {
   showSettings_ = visible;
-  settingsTabs_.setVisible(visible);
+  applyVisibility();
   settingsBtn_.setColour(juce::TextButton::buttonColourId,
                          visible ? theme_.accent.withAlpha(0.3f) : theme_.panel);
   resized();
   repaint();
-}
-
-void MainComponent::timerCallback() {
-  constexpr double dt = 1.0 / 30.0;
-
-  auto updatePlayback = [dt, this](DeckComponent& d, core::DeckTelemetry& telem, core::DeckId id) {
-    if (telem.isPlaying) {
-      telem.currentTimeSec += dt * telem.playbackSpeed;
-      if (telem.loop.active && telem.currentTimeSec >= telem.loop.endTimeSec) {
-        telem.currentTimeSec = telem.loop.startTimeSec;
-      }
-      if (telem.currentTimeSec >= telem.durationSec) {
-        telem.currentTimeSec = telem.durationSec;
-        telem.isPlaying = false;
-      }
-      d.updateTelemetry(telem);
-      globalWaveform_.updateTelemetry(id, telem);
-    }
-  };
-
-  updatePlayback(deckA_, telemetryA_, core::DeckId::A);
-  updatePlayback(deckB_, telemetryB_, core::DeckId::B);
-  updatePlayback(deckC_, telemetryC_, core::DeckId::C);
-  updatePlayback(deckD_, telemetryD_, core::DeckId::D);
-
-  // Animated VU meters
-  auto getPeak = [](const core::DeckTelemetry& telem, float phase) {
-    return telem.isPlaying ? 0.65f + 0.2f * static_cast<float>(std::sin(telem.currentTimeSec * 10.0 + phase)) : 0.0f;
-  };
-
-  const float pA = getPeak(telemetryA_, 0.0f);
-  const float pB = getPeak(telemetryB_, 1.0f);
-  const float pC = getPeak(telemetryC_, 2.0f);
-  const float pD = getPeak(telemetryD_, 3.0f);
-
-  if (layoutMode_ == LayoutMode::FourDecks) {
-    std::array<std::pair<float, float>, core::kDeckCount> peaks = {{
-        {pA, pA * 0.95f},
-        {pB, pB * 0.95f},
-        {pC, pC * 0.95f},
-        {pD, pD * 0.95f},
-    }};
-    const float masterPeak = std::max({pA, pB, pC, pD});
-    mixer_.updateMeters(peaks, masterPeak, masterPeak * 0.95f);
-  } else {
-    const float masterPeak = std::max(pA, pB);
-    mixer_.updateMeters(pA, pA * 0.95f, pB, pB * 0.95f, masterPeak, masterPeak * 0.95f);
-  }
-
-  // Engine stats
-  const auto stats = stats_.stats();
-  char buf[64];
-  std::snprintf(buf, sizeof(buf), "DSP: %.1f%% | SR: %.0f Hz", stats.cpuLoad * 100.0, stats.sampleRate);
-  statsLabel_.setText(buf, juce::dontSendNotification);
-}
-
-void MainComponent::paint(juce::Graphics& g) {
-  g.fillAll(theme_.background);
-
-  // Top accent line
-  g.setColour(theme_.accent);
-  g.fillRect(getLocalBounds().removeFromTop(3));
-}
-
-void MainComponent::resized() {
-  auto area = getLocalBounds().reduced(8);
-  area.removeFromTop(3);  // accent line
-
-  // 1. Top Bar (Height 36px)
-  auto topBar = area.removeFromTop(36);
-  titleLabel_.setBounds(topBar.removeFromLeft(110));
-
-  auto modesArea = topBar.removeFromLeft(200);
-  view2DecksBtn_.setBounds(modesArea.removeFromLeft(95).reduced(2, 4));
-  view4DecksBtn_.setBounds(modesArea.reduced(2, 4));
-
-  recBtn_.setBounds(topBar.removeFromLeft(75).reduced(2, 4));
-  settingsBtn_.setBounds(topBar.removeFromLeft(90).reduced(2, 4));
-
-  statsLabel_.setBounds(topBar.reduced(4, 2));
-
-  area.removeFromTop(6);
-
-  // If Settings Drawer is opened:
-  if (showSettings_) {
-    settingsTabs_.setBounds(area);
-    return;
-  }
-
-  // 2. Global Waveform
-  const int gwH = (layoutMode_ == LayoutMode::FourDecks) ? 80 : 56;
-  globalWaveform_.setBounds(area.removeFromTop(gwH));
-
-  area.removeFromTop(6);
-
-  // 3. Library at bottom (Height ~34% of remaining area, min 160px)
-  const int libH = std::clamp(area.getHeight() * 34 / 100, 160, 260);
-  library_.setBounds(area.removeFromBottom(libH));
-
-  area.removeFromBottom(6);
-
-  // 4. Middle DJ workstation
-  const int totalW = area.getWidth();
-
-  if (layoutMode_ == LayoutMode::FourDecks) {
-    // 4 Decks Layout (SPEC §62):
-    // Left column: Deck A (top), Deck C (bottom)
-    // Center: Mixer (4 channels)
-    // Right column: Deck B (top), Deck D (bottom)
-    const int mixerW = std::clamp(totalW * 28 / 100, 260, 360);
-    const int deckW = (totalW - mixerW - 12) / 2;
-    const int totalDeckH = area.getHeight();
-    const int deckH = (totalDeckH - 4) / 2;
-
-    auto leftCol = area.removeFromLeft(deckW);
-    deckA_.setBounds(leftCol.removeFromTop(deckH));
-    leftCol.removeFromTop(4);
-    deckC_.setBounds(leftCol);
-
-    area.removeFromLeft(6);
-    mixer_.setBounds(area.removeFromLeft(mixerW));
-    area.removeFromLeft(6);
-
-    auto rightCol = area;
-    deckB_.setBounds(rightCol.removeFromTop(deckH));
-    rightCol.removeFromTop(4);
-    deckD_.setBounds(rightCol);
-  } else {
-    // 2 Decks Layout: Deck A (left) | Mixer (center) | Deck B (right)
-    const int mixerW = std::clamp(totalW * 22 / 100, 200, 260);
-    const int deckW = (totalW - mixerW - 12) / 2;
-
-    deckA_.setBounds(area.removeFromLeft(deckW));
-    area.removeFromLeft(6);
-    mixer_.setBounds(area.removeFromLeft(mixerW));
-    area.removeFromLeft(6);
-    deckB_.setBounds(area);
-  }
 }
 
 }  // namespace zyron::ui

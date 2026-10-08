@@ -86,6 +86,12 @@ StemSeparationResult DemucsStemSeparator::separate(const float* const* inputChan
     result.stems[s].channels = std::min(numChannels, 2);
   }
 
+  if (!session_ && !inferer_) {
+    result.success = false;
+    result.error = "No Demucs model is loaded (neither an inference session nor an inferer was configured)";
+    return result;
+  }
+
   const float* inL = inputChannels[0];
   const float* inR = (numChannels > 1 && inputChannels[1] != nullptr) ? inputChannels[1] : inL;
 
@@ -139,26 +145,10 @@ StemSeparationResult DemucsStemSeparator::separate(const float* const* inputChan
     } else if (session_) {
       modelOutputs = session_->run({mixTensor});
     } else {
-      // Fallback DSP separation if neither session nor inferer was configured
-      ai::Tensor fallbackOut(ai::TensorShape({1, 4, 2, segFrames}));
-      float* outData = fallbackOut.data();
-      for (std::int64_t i = 0; i < segFrames; ++i) {
-        const float l = mixData[i];
-        const float r = mixData[segFrames + i];
-        // 0: drums (0.3), 1: bass (0.2), 2: other (0.1), 3: vocals (0.4)
-        outData[0 * 2 * segFrames + i] = l * 0.3F;
-        outData[0 * 2 * segFrames + segFrames + i] = r * 0.3F;
-
-        outData[1 * 2 * segFrames + i] = l * 0.2F;
-        outData[1 * 2 * segFrames + segFrames + i] = r * 0.2F;
-
-        outData[2 * 2 * segFrames + i] = l * 0.1F;
-        outData[2 * 2 * segFrames + segFrames + i] = r * 0.1F;
-
-        outData[3 * 2 * segFrames + i] = l * 0.4F;
-        outData[3 * 2 * segFrames + segFrames + i] = r * 0.4F;
-      }
-      modelOutputs.push_back(std::move(fallbackOut));
+      // Never fake a separation: a result that is not the model's output would be played as if it were.
+      result.success = false;
+      result.error = "No Demucs model is loaded (neither an inference session nor an inferer was configured)";
+      return result;
     }
 
     if (!modelOutputs.empty() && modelOutputs[0].size() >= static_cast<std::size_t>(4 * 2 * segFrames)) {

@@ -10,6 +10,8 @@
 #include "Core/Audio/MixerTypes.hpp"
 #include "Core/Commands/CommandTypes.hpp"
 #include "Core/State/Ids.hpp"
+#include "UI/ParamSlider.hpp"
+#include "Core/State/AppState.hpp"
 #include "UI/Theme.hpp"
 
 namespace zyron::ui {
@@ -45,6 +47,10 @@ class MixerComponent : public juce::Component {
   [[nodiscard]] LayoutMode layoutMode() const noexcept { return layoutMode_; }
 
   // Telemetry meter updates
+  /// Moves the knobs and faders to the state the engine was given (by the user, Automix, MIDI or the AI), so what is
+  /// on screen is what is heard. Controls the user is holding are left alone.
+  void syncFromState(const core::AppState& state);
+
   void updateMeters(float chAPeakL, float chAPeakR, float chBPeakL, float chBPeakR,
                     float masterPeakL, float masterPeakR);
   void updateMeters(const std::array<std::pair<float, float>, core::kDeckCount>& channelPeaks,
@@ -67,14 +73,14 @@ class MixerComponent : public juce::Component {
  private:
   struct ChannelControls {
     juce::Label label;
-    juce::Slider gainKnob;
-    juce::Slider highKnob;
-    juce::Slider midKnob;
-    juce::Slider lowKnob;
-    juce::Slider filterKnob;
+    ParamSlider gainKnob;
+    ParamSlider highKnob;
+    ParamSlider midKnob;
+    ParamSlider lowKnob;
+    ParamSlider filterKnob;
     juce::TextButton cueButton{"CUE"};
     LevelMeter meter;
-    juce::Slider volumeFader;
+    ParamSlider volumeFader;
     juce::ComboBox assignSelector;
   };
 
@@ -89,11 +95,11 @@ class MixerComponent : public juce::Component {
 
   // Master Section
   juce::Label masterLabel_{"master", "MASTER"};
-  juce::Slider masterGainKnob_;
+  ParamSlider masterGainKnob_;
   LevelMeter masterMeter_;
 
   // Crossfader Section
-  juce::Slider crossfaderSlider_;
+  ParamSlider crossfaderSlider_;
   juce::ComboBox curveSelector_;
 
   JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(MixerComponent)

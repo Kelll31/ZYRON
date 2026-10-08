@@ -102,6 +102,11 @@ void GlobalWaveformComponent::updateTelemetry(core::DeckId deck, const core::Dec
   }
 }
 
+void GlobalWaveformComponent::setTransitionRegions(core::DeckId deck,
+                                                   const std::vector<core::TransitionRegion>& regions) {
+  waveformView(deck).setTransitionRegions(regions);
+}
+
 WaveformView& GlobalWaveformComponent::waveformView(core::DeckId deck) {
   switch (deck) {
     case core::DeckId::A:

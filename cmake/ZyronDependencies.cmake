@@ -43,10 +43,20 @@ endmacro()
 # SQLite3 (Public domain) - Database for tracks, playlists, metadata, analysis (SPEC section 28, ROADMAP P3-01).
 macro(zyron_require_sqlite3)
   if(NOT TARGET zyron_sqlite3)
+    # Windows: prefer the static-md triplet (SQLite linked into the exe, dynamic CRT) so no sqlite3.dll has to ship
+    # next to the binary; fall back to the DLL triplet.
     if(DEFINED ENV{VCPKG_ROOT})
-      list(APPEND CMAKE_PREFIX_PATH "$ENV{VCPKG_ROOT}/installed/x64-windows")
-    elseif(EXISTS "C:/Users/User/vcpkg/installed/x64-windows")
-      list(APPEND CMAKE_PREFIX_PATH "C:/Users/User/vcpkg/installed/x64-windows")
+      set(_zyron_vcpkg_root "$ENV{VCPKG_ROOT}")
+    elseif(EXISTS "C:/Users/User/vcpkg")
+      set(_zyron_vcpkg_root "C:/Users/User/vcpkg")
+    endif()
+    if(_zyron_vcpkg_root)
+      foreach(_triplet x64-windows-static-md x64-windows)
+        if(EXISTS "${_zyron_vcpkg_root}/installed/${_triplet}")
+          list(APPEND CMAKE_PREFIX_PATH "${_zyron_vcpkg_root}/installed/${_triplet}")
+          break()
+        endif()
+      endforeach()
     endif()
 
     find_package(unofficial-sqlite3 CONFIG QUIET)
@@ -59,5 +69,43 @@ macro(zyron_require_sqlite3)
       target_link_libraries(zyron_sqlite3 INTERFACE SQLite::SQLite3)
     endif()
     add_library(zyron::sqlite3 ALIAS zyron_sqlite3)
+  endif()
+endmacro()
+
+# Signalsmith Stretch (MIT) + Signalsmith Linear (MIT, its FFT/STFT) - header-only time-stretch / pitch-shift engine for
+# keylock (master tempo) and key shift (ADR-0018). Both are pinned to commit SHAs (tags 1.4.0 and 0.6.4). We do NOT run
+# their CMakeLists (SOURCE_SUBDIR points nowhere): it would add global compile options; we only need the include paths.
+macro(zyron_require_signalsmith_stretch)
+  if(NOT TARGET zyron_signalsmith_stretch)
+    FetchContent_Declare(signalsmith_linear
+      GIT_REPOSITORY https://github.com/Signalsmith-Audio/linear.git
+      GIT_TAG        de55e6a50ffcf6f8f43f649692d94691c7025151  # 0.6.4
+      GIT_SHALLOW    FALSE
+      SOURCE_SUBDIR  zyron_headers_only
+      SYSTEM)
+    FetchContent_Declare(signalsmith_stretch
+      GIT_REPOSITORY https://github.com/Signalsmith-Audio/signalsmith-stretch.git
+      GIT_TAG        a670068d9aeb64913331d5cc29337b19a457a7df  # 1.4.0
+      GIT_SHALLOW    FALSE
+      SOURCE_SUBDIR  zyron_headers_only
+      SYSTEM)
+    FetchContent_MakeAvailable(signalsmith_linear signalsmith_stretch)
+
+    # One-word robustness patch (idempotent, skipped if upstream changed the line): the library keeps its spectral peaks
+    # in a vector reserved for bands/2 entries, but a spectrum of alternating peaks over an odd number of bands has one
+    # more. That would be a heap allocation on the audio thread, so reserve two more.
+    set(_zyron_stretch_header "${signalsmith_stretch_SOURCE_DIR}/signalsmith-stretch.h")
+    file(READ "${_zyron_stretch_header}" _zyron_stretch_text)
+    string(FIND "${_zyron_stretch_text}" "peaks.reserve(bands/2);" _zyron_stretch_pos)
+    if(NOT _zyron_stretch_pos EQUAL -1)
+      string(REPLACE "peaks.reserve(bands/2);" "peaks.reserve(bands/2 + 2);" _zyron_stretch_text "${_zyron_stretch_text}")
+      file(WRITE "${_zyron_stretch_header}" "${_zyron_stretch_text}")
+    endif()
+
+    add_library(zyron_signalsmith_stretch INTERFACE)
+    add_library(zyron::signalsmith_stretch ALIAS zyron_signalsmith_stretch)
+    target_include_directories(zyron_signalsmith_stretch SYSTEM INTERFACE
+      "${signalsmith_stretch_SOURCE_DIR}/include"
+      "${signalsmith_linear_SOURCE_DIR}/include")
   endif()
 endmacro()

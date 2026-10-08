@@ -128,6 +128,32 @@ void migrationV1(Database& db) {
   )");
 }
 
+/// V2: analysis tasks get a priority, so a track the user asked for ("Analyse now") is prepared before the rest.
+void migrationV2(Database& db) {
+  db.execute("ALTER TABLE analysis_tasks ADD COLUMN priority INTEGER NOT NULL DEFAULT 0;");
+}
+
+/// True when `table` already has `column` (so an ALTER TABLE applied before an interrupted run is not repeated).
+bool hasColumn(Database& db, const char* table, const char* column) {
+  auto stmt = db.prepare(std::string("PRAGMA table_info(") + table + ");");
+  while (stmt.step()) {
+    if (stmt.getText(1) == column) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/// V3: integrated loudness (LUFS, 0 = not measured) and the compact per-bar energy profile of a track.
+void migrationV3(Database& db) {
+  if (!hasColumn(db, "tracks", "loudness_lufs")) {
+    db.execute("ALTER TABLE tracks ADD COLUMN loudness_lufs REAL NOT NULL DEFAULT 0.0;");
+  }
+  if (!hasColumn(db, "tracks", "bar_profile")) {
+    db.execute("ALTER TABLE tracks ADD COLUMN bar_profile TEXT NOT NULL DEFAULT '';");
+  }
+}
+
 }  // namespace
 
 void Migrations::apply(Database& db) {
@@ -142,6 +168,12 @@ void Migrations::apply(Database& db) {
       switch (v) {
         case 1:
           migrationV1(db);
+          break;
+        case 2:
+          migrationV2(db);
+          break;
+        case 3:
+          migrationV3(db);
           break;
         default:
           throw std::runtime_error("Unknown migration version: " + std::to_string(v));

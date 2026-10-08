@@ -29,6 +29,8 @@ endfunction()
 zyron_add_test_executable(zyron_core_tests
   core/test_app_state.cpp
   core/test_command.cpp
+  core/test_command_playback.cpp
+  core/test_command_dj_sound.cpp
   core/test_command_bus.cpp
   core/test_event_bus.cpp
   core/test_hardware.cpp
@@ -64,10 +66,17 @@ zyron_add_test_executable(zyron_audio_tests
   audio/test_audio_graph_integration.cpp
   audio/test_channel_strip.cpp
   audio/test_command_bridge.cpp
+  audio/test_bridge_translate.cpp
+  audio/test_output_gate.cpp
+  audio/test_sync_start_and_loader_fallback.cpp
   audio/test_cue_loop_manager.cpp
   audio/test_cue_router.cpp
   audio/test_deck_player.cpp
   audio/test_effects.cpp
+  audio/test_fx_hits.cpp
+  audio/test_keylock.cpp
+  audio/test_rt_review_fixes.cpp
+  audio/test_dj_sound.cpp
   audio/test_mixer.cpp
   audio/test_output_stage.cpp
   audio/test_stem_playback.cpp
@@ -94,6 +103,11 @@ zyron_add_test_executable(zyron_ai_tests
   ai/test_local_llm_adapter.cpp
   ai/test_ai_safety.cpp)
 target_link_libraries(zyron_ai_tests PRIVATE zyron::ai zyron::platform)
+if(TARGET zyron::onnxruntime)
+  target_sources(zyron_ai_tests PRIVATE ai/test_onnx_models.cpp)
+  target_compile_definitions(zyron_ai_tests PRIVATE ZYRON_MODELS_DIR="${CMAKE_SOURCE_DIR}/models")
+  zyron_copy_onnx_runtime(zyron_ai_tests)
+endif()
 
 zyron_add_test_executable(zyron_recording_tests recording/test_master_recorder.cpp)
 target_link_libraries(zyron_recording_tests PRIVATE zyron::recording zyron::dsp)
@@ -101,19 +115,23 @@ target_link_libraries(zyron_recording_tests PRIVATE zyron::recording zyron::dsp)
 zyron_add_test_executable(zyron_library_tests
   library/test_database.cpp
   library/test_scanner.cpp
+  library/test_library_service.cpp
   library/test_analysis_queue.cpp
   library/test_sqlite_library_source.cpp)
 target_link_libraries(zyron_library_tests PRIVATE zyron::library)
 
 zyron_add_test_executable(zyron_analysis_tests
   analysis/test_waveform_peaks.cpp
+  analysis/test_beat_this_pipeline.cpp
   analysis/test_features.cpp
+  analysis/test_resampler.cpp
   analysis/test_beat_detector.cpp
   analysis/test_beatgrid_editor.cpp
   analysis/test_key_energy.cpp
   analysis/test_structure_segmentation.cpp
   analysis/test_energy_v2.cpp
-  analysis/test_chord_mini.cpp)
+  analysis/test_chord_mini.cpp
+  analysis/test_loudness_vocals.cpp)
 target_link_libraries(zyron_analysis_tests PRIVATE zyron::analysis zyron::library)
 
 zyron_add_test_executable(zyron_stems_tests
@@ -129,8 +147,10 @@ zyron_add_test_executable(zyron_ui_tests
   ui/test_model_manager_view.cpp
   ui/test_background_queue_view.cpp
   ui/test_ai_assistant_views.cpp
-  ui/test_first_run_wizard.cpp)
-target_link_libraries(zyron_ui_tests PRIVATE zyron::ui)
+  ui/test_first_run_wizard.cpp
+  ui/test_param_slider.cpp
+  ui/test_automix_persistence.cpp)
+target_link_libraries(zyron_ui_tests PRIVATE zyron::ui juce::juce_events)
 
 zyron_add_test_executable(zyron_midi_tests
   midi/test_midi_device_manager.cpp
@@ -153,6 +173,14 @@ target_link_libraries(zyron_mvp1_gate_tests PRIVATE
   zyron::analysis
   zyron::stems
   zyron::ai)
+
+# App-level: the real composition (library + bus + engine) driven like the UI drives it, without a sound card.
+if(ZYRON_BUILD_APP)
+  zyron_add_test_executable(zyron_app_tests
+    integration/test_app_composition.cpp)
+  target_link_libraries(zyron_app_tests PRIVATE zyron::application juce::juce_events)
+  zyron_copy_onnx_runtime(zyron_app_tests)
+endif()
 
 # End-to-end smoke tests of the real binary (these exercise the JUCE probes, the engine and the UI, which have no
 # unit tests). They need a display: on Linux they run under xvfb-run when it is installed, and are skipped otherwise.

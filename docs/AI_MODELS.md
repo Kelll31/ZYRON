@@ -1,9 +1,9 @@
 # AI model matrix (candidates)
 
-Status: **research input, nothing downloaded or run yet.** Compiled 2026-10-07 from (a) the owner's research
+Status: **research input; since 2026-10-08 four models are downloaded and three are wired into the app** (see "Current status" below). Compiled 2026-10-07 from (a) the owner's research
 notes (secondary source, mixed claims) and (b) our check of the Hugging Face model cards the same day. A card is
 the author's claim — ✔ below means "the card says so", not "we measured it". Licensing policy: ADR-0013.
-Per-model manifests (id, version, sha256, licence, backends) live with the Model Manager (SPEC §74, ROADMAP P5-08).
+Per-model manifests (id, version, sha256, licence, backends) live with the Model Manager (SPEC §74, ROADMAP P5-08); `models/manifest.json` is written by the download script.
 
 Legend: ✔ card-verified 2026-10-07 · ◻ only in the owner's notes, **unverified** · ⚠ risk (see Notes).
 Weights are never committed or bundled (SPEC §73); the Model Manager imports/downloads them.
@@ -22,7 +22,7 @@ Weights are never committed or bundled (SPEC §73); the Model Manager imports/do
 
 | Candidate | Task | Size | Licence (card) | Contract | Status |
 |---|---|---|---|---|---|
-| `musetric/beat-this-onnx` (upstream CPJKU/beat_this, ISMIR 2024) | beat + downbeat → BPM, grid, bars | 120 MB | MIT | host computes spectrogram: **22 050 Hz mono**, n_fft 1024, hop 441, periodic Hann, centre/reflect pad, ÷√1024, 128 Slaney mels via `mel-filterbank.bin`, `log1p(1000·x)`; input `spect [windows,513,128]`; outputs `beat`, `downbeat` logits `[windows,513]`; host peak-picks (±3 frames, >0), 50 fps | ✔ |
+| `musetric/beat-this-onnx` (upstream CPJKU/beat_this, ISMIR 2024) | beat + downbeat → BPM, grid, bars | 182 MB (`beat_this.onnx` 190 649 026 bytes; the card's 120 MB was wrong) | MIT | host computes spectrogram: **22 050 Hz mono**, n_fft 1024, hop 441, periodic Hann, centre/reflect pad, ÷√1024, 128 Slaney mels via `mel-filterbank.bin`, `log1p(1000·x)`; input `spect [windows,513,128]`; outputs `beat`, `downbeat` logits `[windows,513]`; host peak-picks (±3 frames, >0), 50 fps | ✔ |
 | `musetric/skey-onnx` (Deezer S-KEY) | global key, 24 classes | 0.34 MB | MIT | input `audio [1,samples]` **22 050 Hz mono, peak-normalised**; HCQT *inside* graph; output `probs[24]`, order in `config.json` | ✔ ⚠ N3 |
 | `musetric/chordmini-onnx` (ChordMini) | 170-class chord recognition | 17 MB | MIT | host CQT per `cqt-plan.bin` (22 050 Hz, hop 2048, 144 bins, 24/oct); input `features [16,108,144]`; output `logits [16,108,170]` | ✔ |
 | BeatNet, MusicNN, Basic Pitch, MuScriptor | beat/meter, tags, pitch→MIDI, audio→notes | — | BeatNet open-source; MusicNN Apache-2.0; Basic Pitch Apache-2.0; MuScriptor CC BY-NC | PyTorch (no ONNX noted) | ◻ |
@@ -36,6 +36,20 @@ Weights are never committed or bundled (SPEC §73); the Model Manager imports/do
 | `laion/larger_clap_music` | audio↔text zero-shot | see card | ◻ |
 | `OpenMOSS-Team/MOSS-Music-8B-Instruct` | LLM-style music understanding, ~16+ GB fp16 | Apache-2.0 (per notes) | ◻ — "AI brain", never realtime |
 | `Themoor/Ai-DJ-Mixer` | idea/benchmark source only (genre CNN, CLAP, mood, specialists; INT8 ONNX) | unclear per owner's notes | ◻ ⚠ — do not adopt weights |
+
+## Current status (2026-10-08, measured on the owner's PC)
+
+Weights were fetched with `scripts/download_models.ps1` into `models/` (git-ignored). Runtime: ONNX Runtime 1.24.4 + DirectML (ADR-0015).
+
+| Model | File on disk | Status in the app | Measured (`tests/ai/test_onnx_models.cpp`) |
+|---|---|---|---|
+| HTDemucs (`htdemucs/htdemucs.onnx`, 316 446 953 bytes) | downloaded | **wired**: `StemService`, CPU, stem cache `.zyst` | CPU 1.2 s per 7.8 s segment (6.5x real time); DirectML: no result after 150 s on the first run, so CPU is the default. ~0.5 GB RAM per separated track |
+| Beat This! (`beat-this/beat_this.onnx`, 190 649 026 bytes + `mel-filterbank.bin`) | downloaded | **wired**: `TrackAnalyzer` tempo + beat grid, CPU | one 30 s window: CPU 0.37 s, DirectML 0.04 s |
+| S-KEY (`skey/skey.onnx`, 338 482 bytes) | downloaded | **wired**: `TrackAnalyzer` key (Camelot), CPU | 10 s: 0.01 s on CPU and DirectML |
+| ChordMini (`chordmini/chordnet.onnx`, 17 080 550 bytes) | downloaded | **not wired** (loads and runs in the test; `ChordAnalyzer` is not called by `TrackAnalyzer`) | batch 16: CPU 0.06 s, DirectML 0.01 s |
+| HTDemucs FT / 6S, BS-RoFormer, embeddings (MERT/MuQ/CLAP), MOSS-Music, LLM | not downloaded | not wired | - |
+
+No device-choice UI exists: all sessions are created on the CPU (`NeuralModels`). The Model Manager UI and the First-run wizard do not read the real models folder yet. Models are looked up in `ZYRON_MODELS_DIR`, `<app data>/models`, next to the executable, then in parent folders of the executable.
 
 ## Notes and risks
 

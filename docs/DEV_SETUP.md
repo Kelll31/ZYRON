@@ -1,7 +1,6 @@
 # Dev setup
 
-Snapshot of the owner's PC (checked 2026-10-07) and what each OS needs. **Nothing below has been installed by
-Claude** — it is a checklist (task P0-01). Version numbers drift: confirm with `winget show` / vendor docs.
+Snapshot of the owner's PC (checked 2026-10-07) and what each OS needs. Windows tooling was installed on 2026-10-07 (task P0-01); the macOS/Linux sections remain a checklist. Version numbers drift: confirm with `winget show` / vendor docs.
 
 ## Owner's machine (Windows 11 Pro, build 26300)
 
@@ -54,6 +53,32 @@ setx VCPKG_ROOT "$env:USERPROFILE\vcpkg"
   for the exact versions before installing anything. If a toolkit is installed, confirm the supported MSVC
   version in the CUDA release notes (host-compiler support lags behind new VS versions).
 - ASIO is optional and needs Steinberg's SDK (ADR-0011).
+
+### Dependencies that need setup on Windows (since the real engine was wired)
+
+- **SQLite** from vcpkg, static: `vcpkg install "sqlite3[fts5,json1]:x64-windows-static-md" --classic` (ADR-0017;
+  `cmake/ZyronDependencies.cmake` prefers that triplet, the DLL triplet is only a fallback and leaves `sqlite3.dll` missing at run time).
+- **ONNX Runtime 1.24.4 + DirectML 1.15.4** (ADR-0015): the first configure **needs network access** and downloads two
+  nuget packages from nuget.org (SHA-256 pinned in `cmake/ZyronOnnxRuntime.cmake`); they are cached and extracted in
+  `build/<preset>/_ort`, so later configures of the same build dir work offline. `-DZYRON_ENABLE_ONNX=OFF` skips them.
+  The build copies `onnxruntime.dll` and `DirectML.dll` next to the executable. No CUDA toolkit or cuDNN is needed.
+- **Model weights** are not in git or the installer: `powershell -ExecutionPolicy Bypass -File scripts\download_models.ps1`
+  fetches HTDemucs, Beat This!, S-KEY and ChordMini from Hugging Face into `models\` (asks first, verifies SHA-256, can be
+  re-run after an interruption; `-Yes` skips the prompt). Total about 0.5 GB. Without weights the app still runs: tempo and
+  key use the DSP detectors and stem separation is unavailable.
+- Build: `cmake --preset windows-release`, `cmake --build --preset windows-release`.
+
+### Running the tests
+
+```powershell
+ctest --preset windows-release --output-on-failure      # 285 tests at the time of writing
+```
+- Tests that need weights (`tests/ai/test_onnx_models.cpp`, the stem section of `tests/integration/test_app_composition.cpp`)
+  skip when the models are missing. `test_onnx_models.cpp` is compiled with `<repo>/models`; the app and the composition test search
+  `ZYRON_MODELS_DIR`, `<app data>/models`, next to the executable and its parent folders (a checkout's `models/` is found that way).
+- `ZYRON_TEST_MUSIC_DIR` (optional, e.g. `E:\Music\zyron-test`): `test_app_composition.cpp` then scans that folder, waits for
+  the analysis of every track (up to 10 minutes) and checks durations and tempo. Unset = that section is skipped.
+- Audio output smoke test on the real device: `ZYRON.exe --audio-selftest`.
 
 ## macOS
 

@@ -239,3 +239,98 @@ TEST_CASE("StructureSegmenter: MixPointCue generation and database persistence (
   }
   CHECK(userCuePreserved);
 }
+
+#include "Analysis/Structure/MixPointFinder.hpp"
+
+namespace {
+
+/// 174 BPM: 16 bars intro (hats only), 32 bars drop (hats + 50 Hz bass), 16 bars outro (hats), then a silent minute.
+std::vector<float> dnbWithSilentTail(int sampleRate) {
+  const double bar = 4.0 * 60.0 / 174.0;
+  const double introEnd = 16 * bar;
+  const double dropEnd = introEnd + 32 * bar;
+  const double outroEnd = dropEnd + 16 * bar;
+  const auto frames = static_cast<std::size_t>((outroEnd + 60.0) * sampleRate);
+  std::vector<float> mono(frames, 0.0F);
+  for (std::size_t i = 0; i < frames; ++i) {
+    const double t = static_cast<double>(i) / sampleRate;
+    if (t >= outroEnd) {
+      break;
+    }
+    float v = 0.15F * static_cast<float>(std::sin(2.0 * 3.14159265 * 6000.0 * t));
+    if (t >= introEnd && t < dropEnd) {
+      v += 0.6F * static_cast<float>(std::sin(2.0 * 3.14159265 * 50.0 * t));
+    }
+    mono[i] = v;
+  }
+  return mono;
+}
+
+}  // namespace
+
+TEST_CASE("MixPointFinder: drop, mix out before the outro, silent tail never played", "[analysis][mixpoints]") {
+  constexpr int kRate = 22050;
+  const auto mono = dnbWithSilentTail(kRate);
+  const double bar = 4.0 * 60.0 / 174.0;
+
+  zyron::analysis::MixPointInput input;
+  input.mono = mono.data();
+  input.frames = mono.size();
+  input.sampleRate = kRate;
+  input.bpm = 174.0;
+  input.firstBeatSec = 0.0;
+  input.transitionBeats = 32.0;
+  const auto points = zyron::analysis::findMixPoints(input);
+
+  CHECK(points.audibleEndSec < 64 * bar + 1.0);  // the silent minute is not part of the music
+  CHECK(points.mixInSec < 0.5);
+  REQUIRE(points.dropSec > 0.0);
+  CHECK(std::abs(points.dropSec - 16 * bar) < bar);
+  // The outro starts at bar 48: mix out there, and a whole 32-beat transition still fits before the sound ends.
+  CHECK(std::abs(points.mixOutSec - 48 * bar) < bar + 0.01);
+  CHECK(points.mixOutSec + 32 * 60.0 / 174.0 <= points.audibleEndSec + 1e-6);
+}
+
+TEST_CASE("MixPointFinder: silence only finds nothing to mix", "[analysis][mixpoints]") {
+  std::vector<float> silence(22050 * 10, 0.0F);
+  zyron::analysis::MixPointInput input;
+  input.mono = silence.data();
+  input.frames = silence.size();
+  input.sampleRate = 22050;
+  input.bpm = 174.0;
+  const auto points = zyron::analysis::findMixPoints(input);
+  CHECK(points.dropSec < 0.0);
+  CHECK(points.mixOutSec < 0.0);
+}
+
+TEST_CASE("MixPointFinder: a micro drop at the end is never reached by the mix out", "[analysis][mixpoints]") {
+  constexpr int kRate = 22050;
+  const double bar = 4.0 * 60.0 / 174.0;
+  // intro 16 bars, drop 32 bars, outro 16 bars, micro drop 4 bars, tail 8 bars.
+  const double dropStart = 16 * bar;
+  const double dropEnd = 48 * bar;
+  const double microStart = 64 * bar;
+  const double microEnd = 68 * bar;
+  const double end = 76 * bar;
+  std::vector<float> mono(static_cast<std::size_t>(end * kRate), 0.0F);
+  for (std::size_t i = 0; i < mono.size(); ++i) {
+    const double t = static_cast<double>(i) / kRate;
+    float v = 0.15F * static_cast<float>(std::sin(2.0 * 3.14159265 * 6000.0 * t));
+    if ((t >= dropStart && t < dropEnd) || (t >= microStart && t < microEnd)) {
+      v += 0.6F * static_cast<float>(std::sin(2.0 * 3.14159265 * 50.0 * t));
+    }
+    mono[i] = v;
+  }
+  zyron::analysis::MixPointInput input;
+  input.mono = mono.data();
+  input.frames = mono.size();
+  input.sampleRate = kRate;
+  input.bpm = 174.0;
+  input.transitionBeats = 32.0;
+  const auto points = zyron::analysis::findMixPoints(input);
+
+  REQUIRE(points.drops.size() >= 2);  // the micro drop is known
+  CHECK(std::abs(points.drops.back() - microStart) < bar);
+  CHECK(points.mixOutSec + 32 * 60.0 / 174.0 <= microStart + 1e-6);  // the whole transition ends before it
+  CHECK(points.mixOutSec > dropStart);
+}

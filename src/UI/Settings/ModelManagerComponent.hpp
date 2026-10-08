@@ -58,9 +58,9 @@ class ModelManagerComponent : public juce::Component,
 
   juce::Label titleLabel_;
   juce::Label headerInfoLabel_;
-  juce::TextButton refreshButton_{"Refresh"};
-  juce::TextButton importButton_{"Import Local..."};
-  juce::TextButton removeButton_{"Remove"};
+  juce::TextButton refreshButton_{TRANS("Refresh")};
+  juce::TextButton importButton_{TRANS("Import Local...")};
+  juce::TextButton removeButton_{TRANS("Remove")};
   juce::TableListBox table_;
 };
 

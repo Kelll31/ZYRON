@@ -29,7 +29,7 @@
 #include "Audio/Routing/StemRouter.hpp"
 
 // 4. Stems
-#include "Stems/Demucs/DemucsStemSeparator.hpp"
+#include "Stems/MockStemSeparator.hpp"
 
 // 5. Recording
 #include "Recording/MasterRecorder.hpp"
@@ -158,7 +158,7 @@ TEST_CASE("MVP 1 End-to-End Gate Pipeline (SPEC section 82, ROADMAP MVP 1 Gate)"
   stripB.setHighDb(2.0F);               // Boost treble
 
   // Step 7: Stems (Phase 5 Demucs separator & Stem playback)
-  DemucsStemSeparator separator;
+  MockStemSeparator separator;  // a real model needs the downloaded weights; see test_onnx_models and the app tests
   const float* inA[2] = {trackA->channelData(0), trackA->channelData(1)};
   auto stemResult = separator.separate(inA, 2, 44100, 44100.0);
   REQUIRE(stemResult.success);

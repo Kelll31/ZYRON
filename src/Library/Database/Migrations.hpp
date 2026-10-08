@@ -9,7 +9,7 @@ namespace zyron::library {
 /// Each migration executes within an explicit transaction.
 class Migrations {
  public:
-  static constexpr int kCurrentSchemaVersion = 1;
+  static constexpr int kCurrentSchemaVersion = 3;
 
   /// Applies migrations until current version is reached.
   static void apply(Database& db);

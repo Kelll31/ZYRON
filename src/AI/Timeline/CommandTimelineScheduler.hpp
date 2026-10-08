@@ -3,6 +3,7 @@
 
 #include <array>
 #include <atomic>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -62,6 +63,9 @@ class CommandTimelineScheduler final : public core::ICommandTimelineScheduler, p
     return overrideHistory_;
   }
 
+  /// A manual action holds the AI off a deck for this long, then the automation takes over again.
+  static constexpr std::chrono::seconds kOverrideLifetime{10};
+
   /// Quantises a beat target forward to the next grid interval.
   [[nodiscard]] static double quantiseToGrid(double beat, core::QuantiseGrid grid) noexcept;
 
@@ -75,6 +79,7 @@ class CommandTimelineScheduler final : public core::ICommandTimelineScheduler, p
   std::size_t cancelledCount_{0};
 
   std::array<bool, core::kDeckCount> deckOverridden_{false, false, false, false};
+  std::array<std::chrono::steady_clock::time_point, core::kDeckCount> overriddenAt_{};
   std::vector<core::TimelineOverrideEvent> overrideHistory_;
   OverrideCallback onOverride_;
 };

@@ -31,6 +31,9 @@ struct TaskContext {
   std::string contentHash;
   std::filesystem::path cacheDirectory;
   Database* db{nullptr};
+  /// Set when the queue is being stopped: a long handler should return early (it then fails with the message
+  /// "cancelled" and is queued again at the next start).
+  const std::atomic<bool>* cancelRequested{nullptr};
 };
 
 using TaskHandler = std::function<bool(const TaskContext& ctx, std::string& errorOut)>;

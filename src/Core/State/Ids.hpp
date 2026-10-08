@@ -29,6 +29,21 @@ struct TrackId {
 };
 
 /// The three EQ bands of SPEC section 21.
+/// Scratch moves the deck performs by itself, sample-accurately, timed in beats (SPEC section 22).
+enum class ScratchPattern : std::uint8_t {
+  Baby,         // forward-back strokes, two per beat
+  Transformer,  // baby strokes chopped by the fader on 1/8 notes
+  Chirp,        // the fader closes after each forward push
+  Flare,        // baby strokes with a fader click in the middle of each one
+  Crab,         // four quick fader clicks per stroke
+  Scribble,     // fast, tense tremolo of the record
+  Tear,         // the forward push split in two, then pulled back
+  Stab,         // short forward stabs, the fader shut in between
+  Drag,         // slow, heavy drags of the record
+  Brake,        // the turntable's stop button: the record slows to a stop (the deck stops)
+  Backspin      // the record spun backwards, slowing to a stop (the deck stops); keep it last
+};
+
 enum class EqBand : std::uint8_t { Low = 0, Mid, High };
 inline constexpr std::size_t kEqBandCount = 3;
 
@@ -42,6 +57,33 @@ inline constexpr std::size_t kEqBandCount = 3;
 // The counts above are used to size arrays; keep them tied to the enumerators.
 static_assert(index(DeckId::D) + 1 == kDeckCount, "kDeckCount must match the DeckId enumerators");
 static_assert(index(EqBand::High) + 1 == kEqBandCount, "kEqBandCount must match the EqBand enumerators");
+
+/// Effects a channel FX slot can host (SPEC section 23). None = empty slot. The numbering is stable (it travels in
+/// MIDI mappings and AI tool calls): append only.
+enum class FxType : std::uint8_t { None = 0, Echo, Reverb, Flanger, Phaser, Delay };
+inline constexpr std::size_t kFxTypeCount = 6;
+/// FX slots per channel strip.
+inline constexpr std::size_t kFxSlotCount = 2;
+
+[[nodiscard]] constexpr std::size_t index(FxType type) noexcept {
+  return static_cast<std::size_t>(type);
+}
+[[nodiscard]] constexpr bool isValid(FxType type) noexcept {
+  return index(type) < kFxTypeCount;
+}
+static_assert(index(FxType::Delay) + 1 == kFxTypeCount, "kFxTypeCount must match the FxType enumerators");
+
+/// Synthesized DJ performance hits (TriggerFxHit). The numbering is stable (MIDI mappings, AI tool calls): append only.
+enum class FxHitType : std::uint8_t { AirHorn = 0, Siren, Riser, Downlifter, Impact, Laser };
+inline constexpr std::size_t kFxHitTypeCount = 6;
+
+[[nodiscard]] constexpr std::size_t index(FxHitType type) noexcept {
+  return static_cast<std::size_t>(type);
+}
+[[nodiscard]] constexpr bool isValid(FxHitType type) noexcept {
+  return index(type) < kFxHitTypeCount;
+}
+static_assert(index(FxHitType::Laser) + 1 == kFxHitTypeCount, "kFxHitTypeCount must match the FxHitType enumerators");
 
 /// The four stems of SPEC section 32 (the optional 6-stem model adds more later).
 enum class StemKind : std::uint8_t { Vocals = 0, Drums, Bass, Other };

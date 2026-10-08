@@ -40,6 +40,17 @@ void WaveformView::setZoomSeconds(double zoomSec) {
   repaint();
 }
 
+void WaveformView::setTransitionRegions(const std::vector<core::TransitionRegion>& regions) {
+  const auto same = [](const core::TransitionRegion& a, const core::TransitionRegion& b) {
+    return a.startSec == b.startSec && a.endSec == b.endSec && a.kind == b.kind && a.label == b.label;
+  };
+  if (std::equal(regions.begin(), regions.end(), transitionRegions_.begin(), transitionRegions_.end(), same)) {
+    return;  // polled a few times a second: most polls change nothing
+  }
+  transitionRegions_ = regions;
+  repaint();
+}
+
 namespace {
 
 void fillTriangle(juce::Graphics& g, float x1, float y1, float x2, float y2, float x3, float y3) {
@@ -172,6 +183,37 @@ void WaveformView::paint(juce::Graphics& g) {
   }
 }
 
+void WaveformView::paintTransitionRegion(juce::Graphics& g, const core::TransitionRegion& region, float x1, float x2,
+                                         float top, float height, float labelY, float fontSize) const {
+  using Kind = core::TransitionRegion::Kind;
+  juce::Colour colour = theme_.accent;
+  switch (region.kind) {
+    case Kind::Mix: colour = theme_.accent; break;
+    case Kind::Loop: colour = theme_.cueActive; break;   // orange
+    case Kind::Effect: colour = theme_.deckC; break;     // magenta / purple
+    case Kind::Drop: colour = theme_.meterRed; break;
+  }
+  if (region.kind == Kind::Drop) {  // a drop is a moment: a line and a flag, not a band
+    g.setColour(colour);
+    g.fillRect(x1 - 1.0f, top, 2.0f, height);
+  } else {
+    g.setColour(colour.withAlpha(0.22f));
+    g.fillRect(x1, top, x2 - x1, height);
+    g.setColour(colour.withAlpha(0.85f));
+    g.fillRect(x1, top, x2 - x1, 2.0f);
+  }
+  // The engine names the move in English ("BASS SWAP"); the language table turns it into the user's.
+  const juce::String label = juce::translate(region.label.empty() && region.kind == Kind::Drop
+                                                 ? juce::String("DROP")
+                                                 : juce::String(region.label));
+  if (label.isNotEmpty()) {
+    g.setColour(colour.brighter(0.3f));
+    g.setFont(juce::FontOptions(fontSize).withStyle("Bold"));
+    g.drawText(label, juce::Rectangle<float>(x1 + 3.0f, labelY, 90.0f, fontSize + 3.0f).toNearestInt(),
+               juce::Justification::centredLeft, false);
+  }
+}
+
 void WaveformView::paintOverview(juce::Graphics& g, juce::Rectangle<int> bounds) {
   if (bounds.isEmpty()) return;
 
@@ -206,6 +248,13 @@ void WaveformView::paintOverview(juce::Graphics& g, juce::Rectangle<int> bounds)
     g.drawRect(loopRect, 1.0f);
   }
 
+  // 1b. Automix transition regions: where the next mix loops, scratches, sweeps and drops
+  for (const auto& region : transitionRegions_) {
+    const float x1 = static_cast<float>(region.startSec / duration) * w;
+    const float x2 = std::max(x1 + 2.0f, static_cast<float>(region.endSec / duration) * w);
+    paintTransitionRegion(g, region, bounds.getX() + x1, bounds.getX() + x2, topY, h, topY + 1.0f, 9.0f);
+  }
+
   // 2. Draw Hot Cues on overview (SPEC section 25)
   for (const auto& cueOpt : telemetry_.hotCues) {
     if (!cueOpt.has_value()) continue;
@@ -222,6 +271,14 @@ void WaveformView::paintOverview(juce::Graphics& g, juce::Rectangle<int> bounds)
 
     // Marker flag at top
     fillTriangle(g, cueX, topY, cueX + 5.0f, topY, cueX, topY + 6.0f);
+  }
+
+  // 2b. Track markers: mix points, drops, breakdowns
+  for (const auto& marker : telemetry_.markers) {
+    const float x = static_cast<float>(marker.timeSec / duration) * w;
+    g.setColour(marker.color.empty() ? theme_.accent : juce::Colour::fromString(marker.color));
+    g.drawVerticalLine(static_cast<int>(x), topY, topY + h);
+    fillTriangle(g, x, topY + h, x + 5.0f, topY + h, x, topY + h - 6.0f);
   }
 
   // 3. Overview Playhead needle
@@ -325,6 +382,16 @@ void WaveformView::paintDetail(juce::Graphics& g, juce::Rectangle<int> bounds) {
     }
   }
 
+  // 3b. Automix transition regions, under the cue flags so those stay readable
+  for (const auto& region : transitionRegions_) {
+    if (region.endSec < windowStartSec || region.startSec > windowEndSec) {
+      continue;
+    }
+    const float x1 = centerX + static_cast<float>((region.startSec - currentSec) * pps);
+    const float x2 = std::max(x1 + 2.0f, centerX + static_cast<float>((region.endSec - currentSec) * pps));
+    paintTransitionRegion(g, region, x1, x2, topY, static_cast<float>(h), topY + 20.0f, 10.0f);
+  }
+
   // 4. Draw Hot Cue Flags (SPEC section 25)
   for (const auto& cueOpt : telemetry_.hotCues) {
     if (!cueOpt.has_value()) continue;
@@ -351,6 +418,23 @@ void WaveformView::paintDetail(juce::Graphics& g, juce::Rectangle<int> bounds) {
       }
       g.drawText(label, badgeRect.toNearestInt(), juce::Justification::centred, true);
     }
+  }
+
+  // 4b. Track markers: a labelled flag at the bottom edge so it does not collide with the hot cue badges
+  for (const auto& marker : telemetry_.markers) {
+    if (marker.timeSec < windowStartSec || marker.timeSec > windowEndSec) {
+      continue;
+    }
+    const float mx = centerX + static_cast<float>((marker.timeSec - currentSec) * pps);
+    const juce::Colour markerColor = marker.color.empty() ? theme_.accent : juce::Colour::fromString(marker.color);
+    g.setColour(markerColor);
+    g.drawVerticalLine(static_cast<int>(mx), topY, topY + static_cast<float>(h));
+    const juce::Rectangle<float> flag(mx, topY + static_cast<float>(h) - 18.0f, 78.0f, 16.0f);
+    g.fillRoundedRectangle(flag, 2.0f);
+    g.setColour(juce::Colours::black);
+    g.setFont(juce::FontOptions(10.0f).withStyle("Bold"));
+    g.drawText(marker.name.empty() ? juce::String(marker.type) : juce::String(marker.name), flag.toNearestInt(),
+               juce::Justification::centred, true);
   }
 
   // Center division line

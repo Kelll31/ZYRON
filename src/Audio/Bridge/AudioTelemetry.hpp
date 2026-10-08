@@ -18,6 +18,7 @@ struct DeckTelemetry {
   float peakLeft{0.0F};
   float peakRight{0.0F};
   bool hasStems{false};
+  double playbackSpeed{1.0};
   std::array<float, core::kStemKindCount> stemPeaks{};
 
   friend bool operator==(const DeckTelemetry&, const DeckTelemetry&) = default;

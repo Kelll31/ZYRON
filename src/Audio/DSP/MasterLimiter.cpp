@@ -29,6 +29,16 @@ void MasterLimiter::reset() noexcept {
   delayR_.fill(0.0F);
   writePos_ = 0;
   currentGain_ = 1.0F;
+  resetGainHistory();
+}
+
+void MasterLimiter::resetGainHistory() noexcept {
+  historyWindow_ = delaySamples_ + 1;
+  sampleCounter_ = 0;
+  queueHead_ = 0;
+  queueCount_ = 0;
+  minHistory_.fill(1.0F);
+  minHistorySum_ = static_cast<double>(historyWindow_);
 }
 
 void MasterLimiter::setEnabled(bool enabled) noexcept {
@@ -79,12 +89,6 @@ void MasterLimiter::updateCoefficients() noexcept {
   const int dSamples = static_cast<int>(std::round(laMs * 0.001F * sr));
   delaySamples_ = std::clamp(dSamples, 0, static_cast<int>(kMaxDelaySamples - 1));
 
-  if (delaySamples_ > 0) {
-    attackCoeff_ = 1.0F - std::exp(-1.0F / static_cast<float>(delaySamples_));
-  } else {
-    attackCoeff_ = 1.0F;
-  }
-
   const float relMs = releaseMs_.load(std::memory_order_relaxed);
   const float relSamples = std::max(1.0F, relMs * 0.001F * sr);
   releaseCoeff_ = 1.0F - std::exp(-1.0F / relSamples);
@@ -96,10 +100,15 @@ void MasterLimiter::process(float* left, float* right, int numSamples) noexcept 
   }
 
   updateCoefficients();
+  if (historyWindow_ != delaySamples_ + 1) {
+    resetGainHistory();  // the lookahead was changed: the window the history was built for is gone
+  }
 
   const bool isEnabled = enabled_.load(std::memory_order_relaxed);
   const float ceil = ceilingLinear_;
   const int delay = delaySamples_;
+  const int window = historyWindow_;
+  const double windowSize = static_cast<double>(window);
   constexpr std::size_t ringSize = kMaxDelaySamples;
 
   for (int i = 0; i < numSamples; ++i) {
@@ -110,18 +119,41 @@ void MasterLimiter::process(float* left, float* right, int numSamples) noexcept 
     delayL_[writePos_] = inL;
     delayR_[writePos_] = inR;
 
-    // Peak detection on incoming non-delayed audio
+    // Gain this sample needs so that it stays under the ceiling (1 = nothing to do)
     const float peak = std::max(std::abs(inL), std::abs(inR));
-    float targetGain = 1.0F;
+    float required = 1.0F;
     if (isEnabled && peak > ceil && ceil > 0.0F) {
-      targetGain = ceil / peak;
+      required = ceil / peak;
     }
 
-    // Attack / release gain smoothing
-    if (targetGain < currentGain_) {
-      currentGain_ += attackCoeff_ * (targetGain - currentGain_);
+    // Minimum over the lookahead window (monotonic queue): the gain must already be down when the peak comes out
+    while (queueCount_ > 0 && queueValue_[(queueHead_ + queueCount_ - 1) & kHistoryMask] >= required) {
+      --queueCount_;
+    }
+    const std::size_t slot = (queueHead_ + queueCount_) & kHistoryMask;
+    queueIndex_[slot] = sampleCounter_;
+    queueValue_[slot] = required;
+    ++queueCount_;
+    while (queueIndex_[queueHead_] <= sampleCounter_ - window) {
+      queueHead_ = (queueHead_ + 1) & kHistoryMask;
+      --queueCount_;
+    }
+    const float windowMin = queueValue_[queueHead_];
+
+    // Moving average of that minimum over the same length: a smooth ramp down that has reached the minimum exactly when
+    // the peak leaves the delay line
+    const std::size_t newest = static_cast<std::size_t>(sampleCounter_) & kHistoryMask;
+    const std::size_t oldest = static_cast<std::size_t>(sampleCounter_ - window) & kHistoryMask;
+    minHistorySum_ += static_cast<double>(windowMin) - static_cast<double>(minHistory_[oldest]);
+    minHistory_[newest] = windowMin;
+    ++sampleCounter_;
+    const float smoothed = static_cast<float>(minHistorySum_ / windowSize);
+
+    // Down: immediately with the smoothed ramp (never above what the peaks need). Up: exponential release.
+    if (smoothed < currentGain_) {
+      currentGain_ = smoothed;
     } else {
-      currentGain_ += releaseCoeff_ * (targetGain - currentGain_);
+      currentGain_ += releaseCoeff_ * (smoothed - currentGain_);
     }
 
     // Read delayed sample
@@ -129,7 +161,7 @@ void MasterLimiter::process(float* left, float* right, int numSamples) noexcept 
     float outL = delayL_[readPos] * currentGain_;
     float outR = delayR_[readPos] * currentGain_;
 
-    // Safety brickwall ceiling clamp
+    // Safety clamp (rounding error only: the gain above already keeps the waveform under the ceiling)
     if (isEnabled) {
       outL = std::clamp(outL, -ceil, ceil);
       outR = std::clamp(outR, -ceil, ceil);

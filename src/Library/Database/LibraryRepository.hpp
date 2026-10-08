@@ -30,6 +30,10 @@ struct TrackRecord {
   int channels{2};
   std::string waveformPeaksPath;
   std::string stemStatus{"none"};
+  /// Integrated loudness (ITU-R BS.1770 / EBU R128, LUFS). 0.0 = not measured (a real value is always below 0).
+  double loudnessLufs{0.0};
+  /// Encoded per-bar energy profile (analysis::BarProfile::encode()); empty = not analysed.
+  std::string barProfile;
 };
 
 struct CuePointRecord {
@@ -78,6 +82,9 @@ class LibraryRepository {
 
   // Cue points
   static void saveCuePoint(Database& db, const CuePointRecord& cue);
+  static void removeCuePoint(Database& db, std::int64_t trackId, int index);
+  /// Removes the automatic (AI) cues from `firstIndex` up, so a new analysis can replace them; user cues stay.
+  static void removeAutoCues(Database& db, std::int64_t trackId, int firstIndex);
   [[nodiscard]] static std::vector<CuePointRecord> getCuePoints(Database& db, std::int64_t trackId);
 
   // Beatgrid

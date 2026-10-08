@@ -35,17 +35,19 @@ Database& Database::operator=(Database&& other) noexcept {
 }
 
 void Database::configurePragmas() {
+  execute("PRAGMA busy_timeout = 5000;");  // first: switching to WAL can itself meet a busy database
   execute("PRAGMA journal_mode = WAL;");
   execute("PRAGMA synchronous = NORMAL;");
   execute("PRAGMA foreign_keys = ON;");
-  execute("PRAGMA busy_timeout = 5000;");
+  execute("PRAGMA cell_size_check = ON;");  // damaged pages are reported where they are read, not written on
 }
 
 Database Database::open(const std::filesystem::path& path) {
   sqlite3* db = nullptr;
   const auto u8 = path.u8string();
   const auto* utf8Path = reinterpret_cast<const char*>(u8.c_str());
-  const int rc = sqlite3_open(utf8Path, &db);
+  // Serialized mode whatever the library was built with: a connection is safe even if two threads ever share it.
+  const int rc = sqlite3_open_v2(utf8Path, &db, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX, nullptr);
   if (rc != SQLITE_OK) {
     const std::string msg = db ? sqlite3_errmsg(db) : "Failed to allocate sqlite3 handle";
     if (db) {

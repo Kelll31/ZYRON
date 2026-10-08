@@ -4,6 +4,7 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 
 #include <functional>
+#include <vector>
 
 #include "Core/Audio/DeckTelemetry.hpp"
 #include "Core/Audio/WaveformData.hpp"
@@ -28,6 +29,8 @@ class GlobalWaveformComponent : public juce::Component {
 
   void setWaveformData(core::DeckId deck, core::WaveformData data);
   void updateTelemetry(core::DeckId deck, const core::DeckTelemetry& telemetry);
+  /// Automix transition regions of the track on `deck` (empty clears them).
+  void setTransitionRegions(core::DeckId deck, const std::vector<core::TransitionRegion>& regions);
 
   // User seek callback across any deck
   std::function<void(core::DeckId deck, double seekSeconds)> onSeekRequested;

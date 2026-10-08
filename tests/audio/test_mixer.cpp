@@ -107,6 +107,7 @@ TEST_CASE("Mixer crossfader curves", "[audio][mixer][crossfader]") {
   Mixer mixer;
   mixer.prepare(kRate);
   mixer.masterLimiter().setLookaheadMs(0.0F);  // Instantaneous for direct sample checks
+  mixer.glueCompressor().setEnabled(false);  // these checks need exact levels; the glue has its own tests
   mixer.masterLimiter().setCeilingDb(0.0F);    // 0 dBFS ceiling so unity 1.0 is not limited
 
   // Input DC signals: Deck A = 1.0, Deck B = 1.0
@@ -196,6 +197,7 @@ TEST_CASE("Mixer channel assign and Thru bypass", "[audio][mixer][routing]") {
   Mixer mixer;
   mixer.prepare(48000.0);
   mixer.masterLimiter().setLookaheadMs(0.0F);
+  mixer.glueCompressor().setEnabled(false);  // these checks need exact levels; the glue has its own tests
   mixer.masterLimiter().setCeilingDb(0.0F);
 
   std::vector<float> inA(256, 0.6F);
@@ -221,6 +223,7 @@ TEST_CASE("Mixer master gain and full mute kill floor", "[audio][mixer][gain]") 
   Mixer mixer;
   mixer.prepare(48000.0);
   mixer.masterLimiter().setLookaheadMs(0.0F);
+  mixer.glueCompressor().setEnabled(false);  // these checks need exact levels; the glue has its own tests
 
   std::vector<float> in(512, 0.8F);
   std::vector<float> zeros(512, 0.0F);
@@ -288,6 +291,7 @@ TEST_CASE("Mixer block size independence", "[audio][mixer][block_size]") {
   Mixer mixerRef;
   mixerRef.prepare(kRate);
   mixerRef.masterLimiter().setLookaheadMs(0.0F);
+  mixerRef.glueCompressor().setEnabled(false);  // these checks need exact levels; the glue has its own tests
   mixerRef.setCrossfader(0.0F);
   mixerRef.reset();
 
@@ -299,6 +303,7 @@ TEST_CASE("Mixer block size independence", "[audio][mixer][block_size]") {
   Mixer mixerBlock;
   mixerBlock.prepare(kRate);
   mixerBlock.masterLimiter().setLookaheadMs(0.0F);
+  mixerBlock.glueCompressor().setEnabled(false);  // these checks need exact levels; the glue has its own tests
   mixerBlock.setCrossfader(0.0F);
   mixerBlock.reset();
 

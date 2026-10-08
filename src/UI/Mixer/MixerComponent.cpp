@@ -70,10 +70,10 @@ MixerComponent::MixerComponent(Theme theme)
     : theme_(theme), masterMeter_(theme) {
   setupMasterSection();
 
-  setupChannel(channels_[0], core::DeckId::A, "CH A", theme_.deckA);
-  setupChannel(channels_[1], core::DeckId::B, "CH B", theme_.deckB);
-  setupChannel(channels_[2], core::DeckId::C, "CH C", theme_.deckC);
-  setupChannel(channels_[3], core::DeckId::D, "CH D", theme_.deckD);
+  setupChannel(channels_[0], core::DeckId::A, TRANS("CH") + " A", theme_.deckA);
+  setupChannel(channels_[1], core::DeckId::B, TRANS("CH") + " B", theme_.deckB);
+  setupChannel(channels_[2], core::DeckId::C, TRANS("CH") + " C", theme_.deckC);
+  setupChannel(channels_[3], core::DeckId::D, TRANS("CH") + " D", theme_.deckD);
 
   setupCrossfaderSection();
   setLayoutMode(LayoutMode::TwoChannels);
@@ -88,13 +88,14 @@ void MixerComponent::setupChannel(ChannelControls& ch, core::DeckId deck, const 
   ch.label.setJustificationType(juce::Justification::centred);
   addAndMakeVisible(ch.label);
 
-  auto configureKnob = [this](juce::Slider& knob, double min, double max, double defVal,
+  auto configureKnob = [this](ParamSlider& knob, double min, double max, double defVal,
                              const juce::String& suffix) {
     knob.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
     knob.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 42, 14);
     knob.setTextValueSuffix(suffix);
     knob.setRange(min, max, 0.1);
     knob.setValue(defVal, juce::dontSendNotification);
+    knob.setDefaultValue(defVal);
     knob.setColour(juce::Slider::rotarySliderFillColourId, theme_.accent);
     knob.setColour(juce::Slider::rotarySliderOutlineColourId, theme_.background);
     knob.setColour(juce::Slider::textBoxTextColourId, theme_.textDim);
@@ -103,26 +104,31 @@ void MixerComponent::setupChannel(ChannelControls& ch, core::DeckId deck, const 
   };
 
   configureKnob(ch.gainKnob, -24.0, 12.0, 0.0, " dB");
+  ch.gainKnob.setParameterName(TRANS("Channel gain (dB)"));
   ch.gainKnob.onValueChange = [this, deck, &ch] {
     if (onGainChanged) onGainChanged(deck, static_cast<float>(ch.gainKnob.getValue()));
   };
 
   configureKnob(ch.highKnob, -60.0, 12.0, 0.0, " dB");
+  ch.highKnob.setParameterName(TRANS("EQ high (dB)"));
   ch.highKnob.onValueChange = [this, deck, &ch] {
     if (onEqChanged) onEqChanged(deck, core::EqBand::High, static_cast<float>(ch.highKnob.getValue()));
   };
 
   configureKnob(ch.midKnob, -60.0, 12.0, 0.0, " dB");
+  ch.midKnob.setParameterName(TRANS("EQ mid (dB)"));
   ch.midKnob.onValueChange = [this, deck, &ch] {
     if (onEqChanged) onEqChanged(deck, core::EqBand::Mid, static_cast<float>(ch.midKnob.getValue()));
   };
 
   configureKnob(ch.lowKnob, -60.0, 12.0, 0.0, " dB");
+  ch.lowKnob.setParameterName(TRANS("EQ low (dB)"));
   ch.lowKnob.onValueChange = [this, deck, &ch] {
     if (onEqChanged) onEqChanged(deck, core::EqBand::Low, static_cast<float>(ch.lowKnob.getValue()));
   };
 
   configureKnob(ch.filterKnob, -1.0, 1.0, 0.0, "");
+  ch.filterKnob.setParameterName(TRANS("DJ filter (-1 low-pass, +1 high-pass)"));
   ch.filterKnob.onValueChange = [this, deck, &ch] {
     if (onFilterChanged) onFilterChanged(deck, static_cast<float>(ch.filterKnob.getValue()));
   };
@@ -143,6 +149,8 @@ void MixerComponent::setupChannel(ChannelControls& ch, core::DeckId deck, const 
   ch.volumeFader.setTextBoxStyle(juce::Slider::NoTextBox, false, 0, 0);
   ch.volumeFader.setRange(0.0, 1.0, 0.01);
   ch.volumeFader.setValue(1.0, juce::dontSendNotification);
+  ch.volumeFader.setDefaultValue(1.0);
+  ch.volumeFader.setParameterName(TRANS("Channel volume (0 to 1)"));
   ch.volumeFader.setColour(juce::Slider::thumbColourId, theme_.text);
   ch.volumeFader.setColour(juce::Slider::trackColourId, theme_.background);
   ch.volumeFader.onValueChange = [this, deck, &ch] {
@@ -184,6 +192,8 @@ void MixerComponent::setupMasterSection() {
   masterGainKnob_.setTextValueSuffix(" dB");
   masterGainKnob_.setRange(-60.0, 12.0, 0.1);
   masterGainKnob_.setValue(0.0, juce::dontSendNotification);
+  masterGainKnob_.setDefaultValue(0.0);
+  masterGainKnob_.setParameterName(TRANS("Master gain (dB)"));
   masterGainKnob_.setColour(juce::Slider::rotarySliderFillColourId, theme_.accent);
   masterGainKnob_.setColour(juce::Slider::rotarySliderOutlineColourId, theme_.background);
   masterGainKnob_.setColour(juce::Slider::textBoxTextColourId, theme_.textDim);
@@ -201,6 +211,8 @@ void MixerComponent::setupCrossfaderSection() {
   crossfaderSlider_.setTextBoxStyle(juce::Slider::NoTextBox, false, 0, 0);
   crossfaderSlider_.setRange(-1.0, 1.0, 0.01);
   crossfaderSlider_.setValue(0.0, juce::dontSendNotification);
+  crossfaderSlider_.setDefaultValue(0.0);
+  crossfaderSlider_.setParameterName(TRANS("Crossfader (-1 left, +1 right)"));
   crossfaderSlider_.setColour(juce::Slider::thumbColourId, theme_.text);
   crossfaderSlider_.setColour(juce::Slider::trackColourId, theme_.background);
   crossfaderSlider_.onValueChange = [this] {
@@ -208,9 +220,9 @@ void MixerComponent::setupCrossfaderSection() {
   };
   addAndMakeVisible(crossfaderSlider_);
 
-  curveSelector_.addItem("Constant Power", 1);
-  curveSelector_.addItem("Linear", 2);
-  curveSelector_.addItem("Cut", 3);
+  curveSelector_.addItem(TRANS("Constant Power"), 1);
+  curveSelector_.addItem(TRANS("Linear"), 2);
+  curveSelector_.addItem(TRANS("Cut"), 3);
   curveSelector_.setSelectedId(1, juce::dontSendNotification);
   curveSelector_.setColour(juce::ComboBox::backgroundColourId, theme_.panel);
   curveSelector_.setColour(juce::ComboBox::textColourId, theme_.textDim);
@@ -274,6 +286,24 @@ void MixerComponent::updateMeters(const std::array<std::pair<float, float>, core
     channels_[i].meter.setLevels(channelPeaks[i].first, channelPeaks[i].second);
   }
   masterMeter_.setLevels(masterPeakL, masterPeakR);
+}
+
+void MixerComponent::syncFromState(const core::AppState& state) {
+  for (std::size_t i = 0; i < core::kDeckCount; ++i) {
+    auto& ch = channels_[i];
+    const core::DeckState& deck = state.decks[i];
+    ch.gainKnob.showExternalValue(deck.gainDb);
+    ch.lowKnob.showExternalValue(deck.eqDb[core::index(core::EqBand::Low)]);
+    ch.midKnob.showExternalValue(deck.eqDb[core::index(core::EqBand::Mid)]);
+    ch.highKnob.showExternalValue(deck.eqDb[core::index(core::EqBand::High)]);
+    ch.volumeFader.showExternalValue(deck.volume);
+    ch.filterKnob.showExternalValue(deck.filter);
+    if (ch.cueButton.getToggleState() != state.mixer.cue[i] && !ch.cueButton.isMouseButtonDown()) {
+      ch.cueButton.setToggleState(state.mixer.cue[i], juce::dontSendNotification);
+    }
+  }
+  crossfaderSlider_.showExternalValue(state.mixer.crossfader);
+  masterGainKnob_.showExternalValue(state.mixer.masterGainDb);
 }
 
 void MixerComponent::paint(juce::Graphics& g) {

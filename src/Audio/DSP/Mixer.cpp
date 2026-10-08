@@ -37,6 +37,8 @@ void Mixer::prepare(double sampleRate) noexcept {
   // 10 ms master gain smoothing
   rampCoeffGain_ = 1.0F - std::exp(-1.0F / (static_cast<float>(sampleRate_) * 0.010F));
 
+  fxHits_.prepare(sampleRate_);
+  glue_.prepare(sampleRate_);
   masterLimiter_.prepare(sampleRate_);
   reset();
 }
@@ -44,6 +46,8 @@ void Mixer::prepare(double sampleRate) noexcept {
 void Mixer::reset() noexcept {
   currentCrossfader_ = targetCrossfader_.load(std::memory_order_relaxed);
   currentMasterGainLinear_ = targetMasterGainLinear_.load(std::memory_order_relaxed);
+  fxHits_.reset();
+  glue_.reset();
   masterLimiter_.reset();
   masterPeakLeft_.store(0.0F, std::memory_order_relaxed);
   masterPeakRight_.store(0.0F, std::memory_order_relaxed);
@@ -91,6 +95,11 @@ float Mixer::masterGainDb() const noexcept {
     return kMinGainDb;
   }
   return 20.0F * std::log10(lin);
+}
+
+void Mixer::setMasterProcessing(bool glue, bool limiter) noexcept {
+  glue_.setEnabled(glue);
+  masterLimiter_.setEnabled(limiter);
 }
 
 void Mixer::setCue(int channel, bool enabled) noexcept {
@@ -196,11 +205,18 @@ void Mixer::process(const float* const* channelLefts, const float* const* channe
       sumR += inR * mul;
     }
 
-    masterLeft[i] = sumL * currentMasterGainLinear_;
-    masterRight[i] = sumR * currentMasterGainLinear_;
+    // A NaN or infinity from anywhere upstream must never reach the output (or poison the compressor and the limiter).
+    const float outL = sumL * currentMasterGainLinear_;
+    const float outR = sumR * currentMasterGainLinear_;
+    masterLeft[i] = std::isfinite(outL) ? outL : 0.0F;
+    masterRight[i] = std::isfinite(outR) ? outR : 0.0F;
   }
 
-  // Master brickwall limiter
+  // Performance hits join the bus here, so the glue and the limiter see them like any other signal.
+  fxHits_.process(masterLeft, masterRight, numSamples);
+
+  // Glue compressor, then the brickwall limiter
+  glue_.process(masterLeft, masterRight, numSamples);
   masterLimiter_.process(masterLeft, masterRight, numSamples);
 
   // Meter peak levels for telemetry

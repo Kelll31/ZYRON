@@ -25,6 +25,8 @@ TrackRecord readTrackFromStatement(const Statement& stmt) {
   r.channels = stmt.getInt(15);
   r.waveformPeaksPath = stmt.getText(16);
   r.stemStatus = stmt.getText(17);
+  r.loudnessLufs = stmt.getDouble(18);
+  r.barProfile = stmt.getText(19);
   return r;
 }
 
@@ -36,8 +38,9 @@ std::int64_t LibraryRepository::insertTrack(Database& db, const TrackRecord& tra
       filepath, content_hash, file_size, file_mtime,
       title, artist, album, genre, year,
       bpm, key, energy, duration_sec,
-      sample_rate, channels, waveform_peaks_path, stem_status
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+      sample_rate, channels, waveform_peaks_path, stem_status,
+      loudness_lufs, bar_profile
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
   )");
 
   stmt.bindText(1, track.filepath);
@@ -57,6 +60,8 @@ std::int64_t LibraryRepository::insertTrack(Database& db, const TrackRecord& tra
   stmt.bindInt(15, track.channels);
   stmt.bindText(16, track.waveformPeaksPath);
   stmt.bindText(17, track.stemStatus);
+  stmt.bindDouble(18, track.loudnessLufs);
+  stmt.bindText(19, track.barProfile);
 
   stmt.execute();
   return db.lastInsertRowId();
@@ -69,6 +74,7 @@ void LibraryRepository::updateTrack(Database& db, const TrackRecord& track) {
       title = ?, artist = ?, album = ?, genre = ?, year = ?,
       bpm = ?, key = ?, energy = ?, duration_sec = ?,
       sample_rate = ?, channels = ?, waveform_peaks_path = ?, stem_status = ?,
+      loudness_lufs = ?, bar_profile = ?,
       updated_at = (strftime('%s', 'now'))
     WHERE id = ?;
   )");
@@ -90,7 +96,9 @@ void LibraryRepository::updateTrack(Database& db, const TrackRecord& track) {
   stmt.bindInt(15, track.channels);
   stmt.bindText(16, track.waveformPeaksPath);
   stmt.bindText(17, track.stemStatus);
-  stmt.bindInt64(18, track.id);
+  stmt.bindDouble(18, track.loudnessLufs);
+  stmt.bindText(19, track.barProfile);
+  stmt.bindInt64(20, track.id);
 
   stmt.execute();
 }
@@ -107,7 +115,8 @@ std::optional<TrackRecord> LibraryRepository::findTrackById(Database& db, std::i
       id, filepath, content_hash, file_size, file_mtime,
       title, artist, album, genre, year,
       bpm, key, energy, duration_sec,
-      sample_rate, channels, waveform_peaks_path, stem_status
+      sample_rate, channels, waveform_peaks_path, stem_status,
+      loudness_lufs, bar_profile
     FROM tracks WHERE id = ?;
   )");
   stmt.bindInt64(1, id);
@@ -124,7 +133,8 @@ std::optional<TrackRecord> LibraryRepository::findTrackByContentHash(Database& d
       id, filepath, content_hash, file_size, file_mtime,
       title, artist, album, genre, year,
       bpm, key, energy, duration_sec,
-      sample_rate, channels, waveform_peaks_path, stem_status
+      sample_rate, channels, waveform_peaks_path, stem_status,
+      loudness_lufs, bar_profile
     FROM tracks WHERE content_hash = ?;
   )");
   stmt.bindText(1, hash);
@@ -141,7 +151,8 @@ std::optional<TrackRecord> LibraryRepository::findTrackByPath(Database& db, cons
       id, filepath, content_hash, file_size, file_mtime,
       title, artist, album, genre, year,
       bpm, key, energy, duration_sec,
-      sample_rate, channels, waveform_peaks_path, stem_status
+      sample_rate, channels, waveform_peaks_path, stem_status,
+      loudness_lufs, bar_profile
     FROM tracks WHERE filepath = ?;
   )");
   const auto u8 = path.u8string();
@@ -175,7 +186,8 @@ std::vector<TrackRecord> LibraryRepository::searchTracks(Database& db, std::stri
       t.id, t.filepath, t.content_hash, t.file_size, t.file_mtime,
       t.title, t.artist, t.album, t.genre, t.year,
       t.bpm, t.key, t.energy, t.duration_sec,
-      t.sample_rate, t.channels, t.waveform_peaks_path, t.stem_status
+      t.sample_rate, t.channels, t.waveform_peaks_path, t.stem_status,
+      t.loudness_lufs, t.bar_profile
     FROM tracks t
     JOIN tracks_fts f ON t.id = f.rowid
     WHERE tracks_fts MATCH ?
@@ -196,7 +208,8 @@ std::vector<TrackRecord> LibraryRepository::listAllTracks(Database& db) {
       id, filepath, content_hash, file_size, file_mtime,
       title, artist, album, genre, year,
       bpm, key, energy, duration_sec,
-      sample_rate, channels, waveform_peaks_path, stem_status
+      sample_rate, channels, waveform_peaks_path, stem_status,
+      loudness_lufs, bar_profile
     FROM tracks
     ORDER BY artist, title;
   )");
@@ -229,6 +242,20 @@ void LibraryRepository::saveCuePoint(Database& db, const CuePointRecord& cue) {
   stmt.bindText(6, cue.type);
   stmt.bindText(7, cue.source);
 
+  stmt.execute();
+}
+
+void LibraryRepository::removeCuePoint(Database& db, std::int64_t trackId, int index) {
+  auto stmt = db.prepare("DELETE FROM cue_points WHERE track_id = ? AND cue_index = ?;");
+  stmt.bindInt64(1, trackId);
+  stmt.bindInt(2, index);
+  stmt.execute();
+}
+
+void LibraryRepository::removeAutoCues(Database& db, std::int64_t trackId, int firstIndex) {
+  auto stmt = db.prepare("DELETE FROM cue_points WHERE track_id = ? AND cue_index >= ? AND source = 'auto';");
+  stmt.bindInt64(1, trackId);
+  stmt.bindInt(2, firstIndex);
   stmt.execute();
 }
 

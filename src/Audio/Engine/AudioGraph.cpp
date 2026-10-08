@@ -21,10 +21,16 @@ void AudioGraph::prepare(double sampleRate) noexcept {
   mixer_.prepare(sampleRate_);
   cueRouter_.prepare(sampleRate_);
 
-  reset();
+  // A device (re)start must not drop commands that are already queued or race with the producer thread.
+  resetAudioState();
 }
 
 void AudioGraph::reset() noexcept {
+  resetAudioState();
+  bridge_.reset();
+}
+
+void AudioGraph::resetAudioState() noexcept {
   for (auto& buf : deckScratch_) {
     buf.fill(0.0F);
   }
@@ -34,7 +40,9 @@ void AudioGraph::reset() noexcept {
   cueR_.fill(0.0F);
 
   mixer_.reset();
-  bridge_.reset();
+  primeTurn_ = 0;
+  lastBlockPrimes_.store(0, std::memory_order_relaxed);
+  maxBlockPrimes_.store(0, std::memory_order_relaxed);
 }
 
 void AudioGraph::render(float* const* outputs, int numChannels, int numSamples) noexcept {
@@ -48,12 +56,26 @@ void AudioGraph::render(float* const* outputs, int numChannels, int numSamples) 
     // 1. Process control/UI thread commands
     drainMessages();
 
-    // 2. Render each of the 4 decks into scratch buffers, then process channel strips
-    for (std::size_t i = 0; i < core::kDeckCount; ++i) {
+    // 2. Render each of the 4 decks into scratch buffers, then process channel strips. Restarting a time-stretcher is
+    //    the one expensive event on a deck (seek, play, loop wrap): one deck per block may do it, the others catch up.
+    //    The turn rotates every block, so with several decks wanting a prime each one gets it within kDeckCount blocks.
+    bool primeBudget = true;
+    int primesThisBlock = 0;
+    for (std::size_t k = 0; k < core::kDeckCount; ++k) {
+      const std::size_t i = (primeTurn_ + k) % core::kDeckCount;
       float* deckPtrs[2] = {deckScratch_[2 * i].data(), deckScratch_[2 * i + 1].data()};
+      decks_[i].setPrimeAllowed(primeBudget);
       decks_[i].render(deckPtrs, 2, blockSize);
+      if (decks_[i].takePrimedFlag()) {
+        primeBudget = false;
+        ++primesThisBlock;
+      }
       channels_[i].process(deckPtrs, 2, blockSize);
     }
+    primeTurn_ = (primeTurn_ + 1) % core::kDeckCount;
+    lastBlockPrimes_.store(primesThisBlock, std::memory_order_relaxed);
+    maxBlockPrimes_.store(std::max(maxBlockPrimes_.load(std::memory_order_relaxed), primesThisBlock),
+                          std::memory_order_relaxed);
 
     // 3. Prepare inputs for 4-channel mixer
     const float* inL[4] = {deckScratch_[0].data(), deckScratch_[2].data(), deckScratch_[4].data(),
@@ -63,6 +85,9 @@ void AudioGraph::render(float* const* outputs, int numChannels, int numSamples) 
 
     mixer_.process(inL, inR, static_cast<int>(core::kDeckCount), masterL_.data(), masterR_.data(), blockSize);
     mixer_.processCue(inL, inR, static_cast<int>(core::kDeckCount), cueL_.data(), cueR_.data(), blockSize);
+    // The limiter's lookahead delays the master (limiter on or off: the delay line always runs); the cue bus waits the same
+    // time so a headphone mix of the two does not comb-filter.
+    cueRouter_.setCueDelaySamples(mixer_.masterLimiter().latencySamples());
 
     // 4. Route to physical output channels via CueRouter
     float* chunkOutputs[4] = {nullptr, nullptr, nullptr, nullptr};
@@ -72,7 +97,13 @@ void AudioGraph::render(float* const* outputs, int numChannels, int numSamples) 
         chunkOutputs[ch] = outputs[ch] + offset;
       }
     }
-    cueRouter_.route(masterL_.data(), masterR_.data(), cueL_.data(), cueR_.data(), chunkOutputs, numChannels, blockSize);
+    cueRouter_.route(masterL_.data(), masterR_.data(), cueL_.data(), cueR_.data(), chunkOutputs, outChans, blockSize);
+    // Channels beyond the four the router knows must not replay the device's previous block.
+    for (int ch = outChans; ch < numChannels; ++ch) {
+      if (outputs[ch] != nullptr) {
+        std::fill_n(outputs[ch] + offset, blockSize, 0.0F);
+      }
+    }
 
     // 5. Master recording tap
     auto* tap = masterTap_.load(std::memory_order_relaxed);
@@ -92,16 +123,36 @@ void AudioGraph::drainMessages() noexcept {
     const auto deckIdx = core::index(msg.deck);
     switch (msg.type) {
       case RtMessageType::DeckPlay:
-        if (deckIdx < core::kDeckCount) decks_[deckIdx].play();
+        if (deckIdx < core::kDeckCount) {
+          // A synced start: line the beats up against the master as it plays right now, in this very block.
+          PendingPhaseLock& lock = pendingLock_[deckIdx];
+          if (lock.armed && !decks_[deckIdx].isPlaying() && lock.track == decks_[deckIdx].activeTrack() &&
+              lock.master < core::kDeckCount && lock.master != deckIdx && decks_[lock.master].isPlaying()) {
+            (void)SyncManager::alignPhaseWith(decks_[deckIdx], lock.target, decks_[lock.master], lock.masterGrid);
+          }
+          lock.armed = false;
+          decks_[deckIdx].play();
+        }
         break;
       case RtMessageType::DeckPause:
         if (deckIdx < core::kDeckCount) decks_[deckIdx].pause();
         break;
       case RtMessageType::DeckCue:
-        if (deckIdx < core::kDeckCount) decks_[deckIdx].cue();
+        if (deckIdx < core::kDeckCount) {
+          pendingLock_[deckIdx].armed = false;  // a cue is a fresh start: no stale synced start
+          decks_[deckIdx].cue();
+        }
         break;
       case RtMessageType::DeckSeek:
         if (deckIdx < core::kDeckCount) decks_[deckIdx].seek(msg.data.seekSample);
+        break;
+      case RtMessageType::DeckSeekSeconds:
+        if (deckIdx < core::kDeckCount) decks_[deckIdx].seekSeconds(msg.data.seekSeconds);
+        break;
+      case RtMessageType::DeckLoop:
+        if (deckIdx < core::kDeckCount) {
+          decks_[deckIdx].setLoopSeconds(msg.data.loop.startSeconds, msg.data.loop.endSeconds, msg.data.loop.active);
+        }
         break;
       case RtMessageType::DeckGain:
         if (deckIdx < core::kDeckCount) channels_[deckIdx].setGainDb(msg.data.gainDb);
@@ -111,6 +162,29 @@ void AudioGraph::drainMessages() noexcept {
         break;
       case RtMessageType::DeckEq:
         if (deckIdx < core::kDeckCount) channels_[deckIdx].setEqDb(msg.data.eq.band, msg.data.eq.gainDb);
+        break;
+      case RtMessageType::DeckPhaseLock:
+        if (deckIdx < core::kDeckCount) {
+          PendingPhaseLock& lock = pendingLock_[deckIdx];
+          const auto& p = msg.data.phaseLock;
+          lock.armed = true;
+          lock.master = p.master;
+          lock.target.bpm = p.targetBpm;
+          lock.target.firstBeatFrame = p.targetFirstBeat;
+          lock.target.sampleRate = p.targetRate;
+          lock.masterGrid.bpm = p.masterBpm;
+          lock.masterGrid.firstBeatFrame = p.masterFirstBeat;
+          lock.masterGrid.sampleRate = p.masterRate;
+          lock.track = decks_[deckIdx].activeTrack();
+        }
+        break;
+      case RtMessageType::DeckTempoGlide:
+        if (deckIdx < core::kDeckCount) decks_[deckIdx].glideSpeed(msg.data.glide.speed, msg.data.glide.seconds);
+        break;
+      case RtMessageType::DeckScratch:
+        if (deckIdx < core::kDeckCount) {
+          decks_[deckIdx].startScratch(msg.data.scratch.pattern, msg.data.scratch.beats, msg.data.scratch.beatSeconds);
+        }
         break;
       case RtMessageType::DeckFilter:
         if (deckIdx < core::kDeckCount) channels_[deckIdx].setFilter(msg.data.filterBipolar);
@@ -137,6 +211,30 @@ void AudioGraph::drainMessages() noexcept {
         if (deckIdx < core::kDeckCount) {
           decks_[deckIdx].stemMixer().setCue(msg.data.stemControl.stem, msg.data.stemControl.active);
         }
+        break;
+      case RtMessageType::DeckKeylock:
+        if (deckIdx < core::kDeckCount) decks_[deckIdx].setKeylock(msg.data.keylockEnabled);
+        break;
+      case RtMessageType::DeckKeyShift:
+        if (deckIdx < core::kDeckCount) decks_[deckIdx].setKeyShift(msg.data.keyShiftSemitones);
+        break;
+      case RtMessageType::DeckFx:
+        if (deckIdx < core::kDeckCount) {
+          const auto& fx = msg.data.fx;
+          channels_[deckIdx].setFx(fx.slot, fx.type, fx.enabled, fx.wet, fx.param, fx.tailAfterFader);
+        }
+        break;
+      case RtMessageType::DeckFxTempo:
+        if (deckIdx < core::kDeckCount) channels_[deckIdx].setFxBeatSeconds(msg.data.fxBeatSeconds);
+        break;
+      case RtMessageType::DeckTrackTrim:
+        if (deckIdx < core::kDeckCount) channels_[deckIdx].setTrackGainTrimDb(msg.data.trackTrimDb);
+        break;
+      case RtMessageType::MixerProcessing:
+        mixer_.setMasterProcessing(msg.data.processing.glue, msg.data.processing.limiter);
+        break;
+      case RtMessageType::MixerFxHit:
+        mixer_.fxHits().trigger(msg.data.fxHit.type, msg.data.fxHit.level, msg.data.fxHit.beatSeconds);
         break;
       case RtMessageType::MixerCrossfader:
         mixer_.setCrossfader(msg.data.crossfaderPosition);
@@ -184,6 +282,7 @@ void AudioGraph::updateTelemetry() noexcept {
     dt.peakLeft = channels_[i].peakLeft();
     dt.peakRight = channels_[i].peakRight();
     dt.hasStems = decks_[i].hasStems();
+    dt.playbackSpeed = decks_[i].playbackSpeed();
   }
 
   bridge_.publishTelemetry(telem);

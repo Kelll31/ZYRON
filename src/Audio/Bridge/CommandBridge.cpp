@@ -32,6 +32,24 @@ RtMessage RtMessage::makeSeek(core::DeckId deck, std::int64_t sample) noexcept {
   return msg;
 }
 
+RtMessage RtMessage::makeSeekSeconds(core::DeckId deck, double seconds) noexcept {
+  RtMessage msg;
+  msg.type = RtMessageType::DeckSeekSeconds;
+  msg.deck = deck;
+  msg.data.seekSeconds = seconds;
+  return msg;
+}
+
+RtMessage RtMessage::makeLoop(core::DeckId deck, double startSeconds, double endSeconds, bool active) noexcept {
+  RtMessage msg;
+  msg.type = RtMessageType::DeckLoop;
+  msg.deck = deck;
+  msg.data.loop.startSeconds = startSeconds;
+  msg.data.loop.endSeconds = endSeconds;
+  msg.data.loop.active = active;
+  return msg;
+}
+
 RtMessage RtMessage::makeGain(core::DeckId deck, float gainDb) noexcept {
   RtMessage msg;
   msg.type = RtMessageType::DeckGain;
@@ -57,6 +75,42 @@ RtMessage RtMessage::makeEq(core::DeckId deck, core::EqBand band, float gainDb) 
   return msg;
 }
 
+RtMessage RtMessage::makeScratch(core::DeckId deck, core::ScratchPattern pattern, double beats,
+                                 double beatSeconds) noexcept {
+  RtMessage msg;
+  msg.type = RtMessageType::DeckScratch;
+  msg.deck = deck;
+  msg.data.scratch.pattern = static_cast<std::uint8_t>(pattern);
+  msg.data.scratch.beats = static_cast<float>(beats);
+  msg.data.scratch.beatSeconds = static_cast<float>(beatSeconds);
+  return msg;
+}
+
+RtMessage RtMessage::makePhaseLock(core::DeckId deck, core::DeckId master, double targetBpm,
+                                   std::int64_t targetFirstBeat, int targetRate, double masterBpm,
+                                   std::int64_t masterFirstBeat, int masterRate) noexcept {
+  RtMessage msg;
+  msg.type = RtMessageType::DeckPhaseLock;
+  msg.deck = deck;
+  msg.data.phaseLock.master = static_cast<std::uint8_t>(core::index(master));
+  msg.data.phaseLock.targetBpm = targetBpm;
+  msg.data.phaseLock.targetFirstBeat = targetFirstBeat;
+  msg.data.phaseLock.targetRate = targetRate;
+  msg.data.phaseLock.masterBpm = masterBpm;
+  msg.data.phaseLock.masterFirstBeat = masterFirstBeat;
+  msg.data.phaseLock.masterRate = masterRate;
+  return msg;
+}
+
+RtMessage RtMessage::makeTempoGlide(core::DeckId deck, double speed, double seconds) noexcept {
+  RtMessage msg;
+  msg.type = RtMessageType::DeckTempoGlide;
+  msg.deck = deck;
+  msg.data.glide.speed = speed;
+  msg.data.glide.seconds = seconds;
+  return msg;
+}
+
 RtMessage RtMessage::makeFilter(core::DeckId deck, float bipolar) noexcept {
   RtMessage msg;
   msg.type = RtMessageType::DeckFilter;
@@ -70,6 +124,69 @@ RtMessage RtMessage::makePlaybackSpeed(core::DeckId deck, double speedRatio) noe
   msg.type = RtMessageType::DeckPlaybackSpeed;
   msg.deck = deck;
   msg.data.speedRatio = speedRatio;
+  return msg;
+}
+
+RtMessage RtMessage::makeKeylock(core::DeckId deck, bool enabled) noexcept {
+  RtMessage msg;
+  msg.type = RtMessageType::DeckKeylock;
+  msg.deck = deck;
+  msg.data.keylockEnabled = enabled;
+  return msg;
+}
+
+RtMessage RtMessage::makeKeyShift(core::DeckId deck, float semitones) noexcept {
+  RtMessage msg;
+  msg.type = RtMessageType::DeckKeyShift;
+  msg.deck = deck;
+  msg.data.keyShiftSemitones = semitones;
+  return msg;
+}
+
+RtMessage RtMessage::makeFx(core::DeckId deck, int slot, core::FxType type, bool enabled, float wet, float param,
+                            bool tailAfterFader) noexcept {
+  RtMessage msg;
+  msg.type = RtMessageType::DeckFx;
+  msg.deck = deck;
+  msg.data.fx.slot = static_cast<std::uint8_t>(slot);
+  msg.data.fx.type = type;
+  msg.data.fx.enabled = enabled;
+  msg.data.fx.tailAfterFader = tailAfterFader;
+  msg.data.fx.wet = wet;
+  msg.data.fx.param = param;
+  return msg;
+}
+
+RtMessage RtMessage::makeFxTempo(core::DeckId deck, double beatSeconds) noexcept {
+  RtMessage msg;
+  msg.type = RtMessageType::DeckFxTempo;
+  msg.deck = deck;
+  msg.data.fxBeatSeconds = static_cast<float>(beatSeconds);
+  return msg;
+}
+
+RtMessage RtMessage::makeTrackTrim(core::DeckId deck, float db) noexcept {
+  RtMessage msg;
+  msg.type = RtMessageType::DeckTrackTrim;
+  msg.deck = deck;
+  msg.data.trackTrimDb = db;
+  return msg;
+}
+
+RtMessage RtMessage::makeMasterProcessing(bool glue, bool limiter) noexcept {
+  RtMessage msg;
+  msg.type = RtMessageType::MixerProcessing;
+  msg.data.processing.glue = glue;
+  msg.data.processing.limiter = limiter;
+  return msg;
+}
+
+RtMessage RtMessage::makeFxHit(core::FxHitType type, float level, double beatSeconds) noexcept {
+  RtMessage msg;
+  msg.type = RtMessageType::MixerFxHit;
+  msg.data.fxHit.type = type;
+  msg.data.fxHit.level = level;
+  msg.data.fxHit.beatSeconds = beatSeconds;
   return msg;
 }
 
@@ -179,6 +296,12 @@ std::optional<RtMessage> CommandBridge::translateCommand(const core::Command& co
           return RtMessage::makeVolume(cmd.deck, cmd.linear);
         } else if constexpr (std::is_same_v<T, core::SetEq>) {
           return RtMessage::makeEq(cmd.deck, cmd.band, cmd.db);
+        } else if constexpr (std::is_same_v<T, core::SetFilter>) {
+          return RtMessage::makeFilter(cmd.deck, cmd.position);
+        } else if constexpr (std::is_same_v<T, core::GlideTempo>) {
+          return RtMessage::makeTempoGlide(cmd.deck, cmd.speed, cmd.seconds);
+        } else if constexpr (std::is_same_v<T, core::Scratch>) {
+          return RtMessage::makeScratch(cmd.deck, cmd.pattern, cmd.beats, cmd.beatSeconds);
         } else if constexpr (std::is_same_v<T, core::SetStemVolume>) {
           return RtMessage::makeStemVolume(cmd.deck, cmd.stem, cmd.linear);
         } else if constexpr (std::is_same_v<T, core::SetStemMute>) {
@@ -187,6 +310,26 @@ std::optional<RtMessage> CommandBridge::translateCommand(const core::Command& co
           return RtMessage::makeStemSolo(cmd.deck, cmd.stem, cmd.solo);
         } else if constexpr (std::is_same_v<T, core::SetStemCue>) {
           return RtMessage::makeStemCue(cmd.deck, cmd.stem, cmd.cue);
+        } else if constexpr (std::is_same_v<T, core::Seek>) {
+          return RtMessage::makeSeekSeconds(cmd.deck, cmd.seconds);
+        } else if constexpr (std::is_same_v<T, core::SetPlaybackSpeed>) {
+          return RtMessage::makePlaybackSpeed(cmd.deck, cmd.speed);
+        } else if constexpr (std::is_same_v<T, core::SetKeylock>) {
+          return RtMessage::makeKeylock(cmd.deck, cmd.enabled);
+        } else if constexpr (std::is_same_v<T, core::SetKeyShift>) {
+          return RtMessage::makeKeyShift(cmd.deck, cmd.semitones);
+        } else if constexpr (std::is_same_v<T, core::SetFx>) {
+          return RtMessage::makeFx(cmd.deck, cmd.slot, cmd.type, cmd.enabled, cmd.wet, cmd.param, cmd.tailAfterFader);
+        } else if constexpr (std::is_same_v<T, core::SetFxTempo>) {
+          return RtMessage::makeFxTempo(cmd.deck, cmd.beatSeconds);
+        } else if constexpr (std::is_same_v<T, core::SetTrackGainTrim>) {
+          return RtMessage::makeTrackTrim(cmd.deck, cmd.db);
+        } else if constexpr (std::is_same_v<T, core::SetMasterProcessing>) {
+          return RtMessage::makeMasterProcessing(cmd.glue, cmd.limiter);
+        } else if constexpr (std::is_same_v<T, core::TriggerFxHit>) {
+          return RtMessage::makeFxHit(cmd.type, cmd.level, cmd.beatSeconds);
+        } else if constexpr (std::is_same_v<T, core::SetLoop>) {
+          return RtMessage::makeLoop(cmd.deck, cmd.startSeconds, cmd.endSeconds, cmd.active);
         } else if constexpr (std::is_same_v<T, core::SetTestTone>) {
           return RtMessage::makeTestTone(cmd.enabled, cmd.frequencyHz, cmd.levelDb);
         } else if constexpr (std::is_same_v<T, core::UnloadTrack>) {

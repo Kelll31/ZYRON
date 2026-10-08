@@ -48,6 +48,9 @@ class CommandBus {
   /// (except for Reentrant, which is returned without publishing).
   [[nodiscard]] std::optional<CommandError> submit(const Command& command, const CommandOrigin& origin);
 
+  /// The current user-intent state (what the accepted commands have produced so far). Any non-realtime thread.
+  [[nodiscard]] std::shared_ptr<const AppState> state() const { return store_.snapshot(); }
+
  private:
   [[nodiscard]] bool insideSinkCallback() const noexcept;
 

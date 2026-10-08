@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+#include <type_traits>
+#include <variant>
 #include "AI/Timeline/CommandTimelineScheduler.hpp"
 
 #include <algorithm>
@@ -189,6 +191,22 @@ void CommandTimelineScheduler::handleUserCommand(
     return;
   }
 
+  // Only actions that take over the mix count as manual control. Looking around (seek, loop, sync, pitch, trim, a
+  // stem split) does not stop the AI: a DJ scrubbing to the end of a track wants to hear the transition.
+  const bool takesControl = std::visit(
+      [](const auto& c) {
+        using T = std::decay_t<decltype(c)>;
+        return std::is_same_v<T, core::Play> || std::is_same_v<T, core::Pause> || std::is_same_v<T, core::Cue> ||
+               std::is_same_v<T, core::LoadTrack> || std::is_same_v<T, core::UnloadTrack> ||
+               std::is_same_v<T, core::SetVolume> || std::is_same_v<T, core::SetEq> ||
+               std::is_same_v<T, core::SetStemVolume> || std::is_same_v<T, core::SetStemMute> ||
+               std::is_same_v<T, core::SetStemSolo> || std::is_same_v<T, core::SetStemCue>;
+      },
+      command);
+  if (!takesControl) {
+    return;
+  }
+
   const auto deck = *target;
   std::size_t cancelledCount = 0;
   OverrideCallback cb;
@@ -196,6 +214,7 @@ void CommandTimelineScheduler::handleUserCommand(
   {
     std::lock_guard<std::mutex> lock(mutex_);
     deckOverridden_[core::index(deck)] = true;
+    overriddenAt_[core::index(deck)] = std::chrono::steady_clock::now();
 
     // Immediately cancel pending AI commands on this deck (User-override-wins rule)
     for (auto& item : scheduled_) {
@@ -235,7 +254,8 @@ void CommandTimelineScheduler::handleUserCommand(
 }
 
 bool CommandTimelineScheduler::isDeckOverridden(core::DeckId deck) const noexcept {
-  return deckOverridden_[core::index(deck)];
+  const auto index = core::index(deck);
+  return deckOverridden_[index] && std::chrono::steady_clock::now() - overriddenAt_[index] < kOverrideLifetime;
 }
 
 void CommandTimelineScheduler::clearDeckOverride(core::DeckId deck) {

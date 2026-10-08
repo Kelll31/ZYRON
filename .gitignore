@@ -43,3 +43,6 @@ __pycache__/
 # OS
 .DS_Store
 Thumbs.db
+
+# Local test music (commercial MP3s, never commit)
+test_music/

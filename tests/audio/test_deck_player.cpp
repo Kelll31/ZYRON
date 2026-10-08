@@ -161,3 +161,98 @@ TEST_CASE("DeckPlayer is realtime safe (zero allocations during render)") {
   REQUIRE(guard.allocationCount() == 0);
   REQUIRE(guard.deallocationCount() == 0);
 }
+
+TEST_CASE("DeckPlayer: CUE and eject while playing leave no step in the output", "[audio][deck][declick]") {
+  float prev = 0.0F;  // the last sample of the previous call: steps are measured across calls too
+  const auto maxStep = [&prev](DeckPlayer& deck, int blocks) {
+    std::vector<float> left(256), right(256);
+    float worst = 0.0F;
+    for (int b = 0; b < blocks; ++b) {
+      float* channels[2] = {left.data(), right.data()};
+      deck.render(channels, 2, 256);
+      for (const float v : left) {
+        worst = std::max(worst, std::fabs(v - prev));
+        prev = v;
+      }
+    }
+    return worst;
+  };
+
+  DeckPlayer deck;
+  deck.prepare(kSampleRate);
+  deck.loadTrack(createSineTrack(5.0, 440.0, 0.8F));
+  deck.play();
+  (void)maxStep(deck, 40);  // reach full level
+
+  SECTION("CUE while playing") {
+    deck.cue();
+    // A 440 Hz sine at 0.8 moves at most ~0.06 per sample; a cut from full level would step by up to 0.8.
+    CHECK(maxStep(deck, 4) < 0.1F);
+  }
+
+  SECTION("eject while playing") {
+    const auto released = deck.unloadTrack();
+    CHECK(released.track != nullptr);
+    CHECK(maxStep(deck, 4) < 0.1F);
+  }
+}
+
+TEST_CASE("DeckPlayer: scratches play the record back and forth, then carry on on time", "[audio][deck][scratch]") {
+  DeckPlayer deck;
+  deck.prepare(kSampleRate);
+  deck.loadTrack(createSineTrack(10.0, 440.0, 0.5F));
+  deck.play();
+  std::vector<float> left(256), right(256);
+  float* channels[2] = {left.data(), right.data()};
+  for (int b = 0; b < 40; ++b) deck.render(channels, 2, 256);
+
+  constexpr double kBeatSec = 0.5;  // 120 BPM
+
+  SECTION("a baby scratch goes backwards at some point and ends where the record would have been") {
+    const double before = static_cast<double>(deck.currentFrame());
+    deck.startScratch(static_cast<int>(zyron::core::ScratchPattern::Baby), 1.0, kBeatSec);
+    double minHead = before;
+    const int blocks = static_cast<int>(kBeatSec * kSampleRate / 256.0) + 2;
+    for (int b = 0; b < blocks; ++b) {
+      deck.render(channels, 2, 256);
+      minHead = std::min(minHead, static_cast<double>(deck.currentFrame()));
+    }
+    CHECK(deck.isPlaying());
+    const double expected = before + blocks * 256.0;  // slip: as if it had played normally
+    CHECK(std::abs(static_cast<double>(deck.currentFrame()) - expected) < 512.0);
+  }
+
+  SECTION("a backspin stops the deck") {
+    deck.startScratch(static_cast<int>(zyron::core::ScratchPattern::Backspin), 1.0, kBeatSec);
+    for (int b = 0; b < static_cast<int>(kBeatSec * kSampleRate / 256.0) + 4; ++b) deck.render(channels, 2, 256);
+    CHECK_FALSE(deck.isPlaying());
+  }
+}
+
+TEST_CASE("DeckPlayer: every scratch pattern stays finite and keeps the deck in time", "[audio][deck][scratch]") {
+  using zyron::core::ScratchPattern;
+  for (int pattern = 0; pattern < static_cast<int>(ScratchPattern::Backspin); ++pattern) {
+    if (pattern == static_cast<int>(ScratchPattern::Brake)) {
+      continue;  // a brake stops the deck, like a backspin
+    }
+    DeckPlayer deck;
+    deck.prepare(kSampleRate);
+    deck.loadTrack(createSineTrack(10.0, 440.0, 0.5F));
+    deck.play();
+    std::vector<float> left(256), right(256);
+    float* channels[2] = {left.data(), right.data()};
+    for (int b = 0; b < 40; ++b) deck.render(channels, 2, 256);
+    const double before = static_cast<double>(deck.currentFrame());
+    deck.startScratch(pattern, 2.0, 0.35);
+    const int blocks = static_cast<int>(0.7 * kSampleRate / 256.0) + 2;
+    bool finite = true;
+    for (int b = 0; b < blocks; ++b) {
+      deck.render(channels, 2, 256);
+      for (const float v : left) finite = finite && std::isfinite(v) && std::abs(v) < 2.0F;
+    }
+    INFO("pattern " << pattern);
+    CHECK(finite);
+    CHECK(deck.isPlaying());
+    CHECK(std::abs(static_cast<double>(deck.currentFrame()) - (before + blocks * 256.0)) < 512.0);
+  }
+}

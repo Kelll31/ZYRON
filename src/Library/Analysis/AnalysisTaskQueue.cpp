@@ -237,7 +237,7 @@ bool AnalysisTaskQueue::processNextPendingTask(Database& db, const std::filesyst
     SELECT id, track_id, task_type, version
     FROM analysis_tasks
     WHERE status = 'pending'
-    ORDER BY id ASC
+    ORDER BY priority DESC, id ASC
     LIMIT 1;
   )");
 
@@ -274,6 +274,7 @@ bool AnalysisTaskQueue::processNextPendingTask(Database& db, const std::filesyst
   ctx.contentHash = trackOpt->contentHash;
   ctx.cacheDirectory = cacheDir;
   ctx.db = &db;
+  ctx.cancelRequested = &stopRequested_;
 
   auto handlerIt = handlers_.find(taskType);
   if (handlerIt == handlers_.end()) {

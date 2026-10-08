@@ -100,6 +100,11 @@ class SyncManager {
                           const DeckPlayer& masterPlayer,
                           core::DeckId masterDeck) noexcept;
 
+  /// The same alignment with grids handed over explicitly (the audio thread never reads grids_, which the command
+  /// thread writes).
+  static std::int64_t alignPhaseWith(DeckPlayer& targetPlayer, const DeckGrid& targetGrid,
+                                     const DeckPlayer& masterPlayer, const DeckGrid& masterGrid) noexcept;
+
   /// Full one-shot sync: matches tempo and aligns phase sample-accurately.
   void syncDeck(DeckPlayer& targetPlayer,
                 core::DeckId targetDeck,

@@ -285,7 +285,11 @@ TEST_CASE("CPU budget and soak test: 4 decks + EQ + Filter + FX at 64/128/256 fr
       graph.deck(core::DeckId::C).loadTrack(trackC);
       graph.deck(core::DeckId::D).loadTrack(trackD);
 
-      // Start all 4 decks with varispeed
+      // Start all 4 decks with varispeed. Keylock (on by default) would put a time-stretcher on every deck; this soak
+      // measures the varispeed path, the stretching decks have their own CPU test in test_dj_sound.cpp.
+      for (std::size_t deckIndex = 0; deckIndex < core::kDeckCount; ++deckIndex) {
+        graph.deck(deckIndex).setKeylock(false);
+      }
       graph.deck(core::DeckId::A).play();
       graph.deck(core::DeckId::A).setPlaybackSpeed(1.04);
       graph.deck(core::DeckId::B).play();

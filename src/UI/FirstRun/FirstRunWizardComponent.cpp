@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "UI/FirstRun/FirstRunWizardComponent.hpp"
+#include "UI/Localization.hpp"
 
 #include <sstream>
 
@@ -14,7 +15,7 @@ FirstRunWizardComponent::FirstRunWizardComponent(std::shared_ptr<core::IFirstRun
   setOpaque(true);
 
   // Headers
-  headerLabel_.setText("ZYRON — Setup Wizard", juce::dontSendNotification);
+  headerLabel_.setText(TRANS("ZYRON - Setup Wizard"), juce::dontSendNotification);
   headerLabel_.setFont(juce::FontOptions{22.0F, juce::Font::bold});
   headerLabel_.setColour(juce::Label::textColourId, theme_.text);
   addAndMakeVisible(headerLabel_);
@@ -25,8 +26,9 @@ FirstRunWizardComponent::FirstRunWizardComponent(std::shared_ptr<core::IFirstRun
 
   // Step 1: Policy
   policyInfoLabel_.setText(
-      "ZYRON is designed offline-first (SPEC \xc2\xa7""75). Playback, mixing, stems, and analysis work completely "
-      "without an internet connection.\nChoose your network policy below:",
+      juce::String(TRANS("ZYRON is designed offline-first (SPEC %s). Playback, mixing, stems, and analysis work "
+                         "completely without an internet connection.\nChoose your network policy below:"))
+          .replace("%s", juce::String::fromUTF8("\xc2\xa7""75")),
       juce::dontSendNotification);
   policyInfoLabel_.setFont(juce::FontOptions{13.0F});
   policyInfoLabel_.setColour(juce::Label::textColourId, theme_.textDim);
@@ -41,7 +43,7 @@ FirstRunWizardComponent::FirstRunWizardComponent(std::shared_ptr<core::IFirstRun
   addAndMakeVisible(allowNetworkButton_);
 
   // Step 2: Directory
-  dirPromptLabel_.setText("Select where AI model weights (.onnx) are stored on disk:",
+  dirPromptLabel_.setText(TRANS("Select where AI model weights (.onnx) are stored on disk:"),
                           juce::dontSendNotification);
   dirPromptLabel_.setFont(juce::FontOptions{13.0F});
   dirPromptLabel_.setColour(juce::Label::textColourId, theme_.textDim);
@@ -50,7 +52,7 @@ FirstRunWizardComponent::FirstRunWizardComponent(std::shared_ptr<core::IFirstRun
   dirCurrentLabel_.setFont(juce::FontOptions{13.0F});
   dirCurrentLabel_.setColour(juce::Label::textColourId, theme_.text);
   if (manager_) {
-    dirCurrentLabel_.setText("Current path: " + manager_->config().modelsDirectory,
+    dirCurrentLabel_.setText(juce::String(TRANS("Current path:")) + " " + juce::String(manager_->config().modelsDirectory),
                              juce::dontSendNotification);
   }
   addAndMakeVisible(dirCurrentLabel_);
@@ -61,7 +63,7 @@ FirstRunWizardComponent::FirstRunWizardComponent(std::shared_ptr<core::IFirstRun
   addAndMakeVisible(useCustomDirButton_);
 
   // Step 3: Models
-  modelsHeaderLabel_.setText("Model Verification Status (SPEC \xc2\xa7""73, \xc2\xa7""74):", juce::dontSendNotification);
+  modelsHeaderLabel_.setText(juce::String(TRANS("Model Verification Status")) + juce::String::fromUTF8(" (SPEC \xc2\xa7""73, \xc2\xa7""74):"), juce::dontSendNotification);
   modelsHeaderLabel_.setFont(juce::FontOptions{15.0F, juce::Font::bold});
   modelsHeaderLabel_.setColour(juce::Label::textColourId, theme_.text);
   addAndMakeVisible(modelsHeaderLabel_);
@@ -77,8 +79,8 @@ FirstRunWizardComponent::FirstRunWizardComponent(std::shared_ptr<core::IFirstRun
 
   // Step 4: Completion
   completionMessageLabel_.setText(
-      "All set! Your preferences and model configurations have been saved.\n"
-      "Click Launch to start mixing tracks.",
+      TRANS("All set! Your preferences and model configurations have been saved.\n"
+            "Click Launch to start mixing tracks."),
       juce::dontSendNotification);
   completionMessageLabel_.setFont(juce::FontOptions{16.0F, juce::Font::bold});
   completionMessageLabel_.setColour(juce::Label::textColourId, theme_.text);
@@ -178,8 +180,9 @@ void FirstRunWizardComponent::updateVisibility() {
   const auto step = currentStep();
 
   subtitleLabel_.setText(
-      "Step " + juce::String(static_cast<int>(step) + 1) + " of 4: " +
-          juce::String(std::string(core::firstRunStepName(step))),
+      juce::String(TRANS("Step %n of 4: %s"))
+          .replace("%n", juce::String(static_cast<int>(step) + 1))
+          .replace("%s", i18n::translateMessage(std::string(core::firstRunStepName(step)))),
       juce::dontSendNotification);
 
   const bool isStep1 = (step == core::FirstRunStep::WelcomeAndPolicy);
@@ -218,8 +221,9 @@ void FirstRunWizardComponent::refreshModelsView() {
   const auto summaries = manager_->scanAndVerifyModels();
   std::stringstream ss;
   for (const auto& s : summaries) {
-    ss << "[" << core::modelInstallStatusName(s.status) << "] "
-       << s.name << " (" << s.filename << "): " << s.verificationMessage << "\n";
+    ss << "[" << i18n::translateMessage(core::modelInstallStatusName(s.status)).toStdString() << "] "
+       << s.name << " (" << s.filename
+       << "): " << i18n::translateMessage(s.verificationMessage).toStdString() << "\n";
   }
   modelStatusReportLabel_.setText(ss.str(), juce::dontSendNotification);
 }
@@ -233,10 +237,10 @@ void FirstRunWizardComponent::buttonClicked(juce::Button* button) {
     updateVisibility();
   } else if (button == &useDefaultDirButton_ && manager_) {
     manager_->setModelsDirectory("models");
-    dirCurrentLabel_.setText("Current path: models", juce::dontSendNotification);
+    dirCurrentLabel_.setText(TRANS("Current path: models"), juce::dontSendNotification);
   } else if (button == &useCustomDirButton_ && manager_) {
     manager_->setModelsDirectory("custom_models");
-    dirCurrentLabel_.setText("Current path: custom_models", juce::dontSendNotification);
+    dirCurrentLabel_.setText(TRANS("Current path: custom_models"), juce::dontSendNotification);
   } else if (button == &verifyModelsButton_) {
     refreshModelsView();
   } else if (button == &downloadModelsButton_ && manager_) {

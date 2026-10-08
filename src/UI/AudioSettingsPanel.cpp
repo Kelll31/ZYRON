@@ -44,7 +44,7 @@ AudioSettingsPanel::AudioSettingsPanel(const Theme& theme, core::CommandBus& bus
 
   id = 1;
   for (const int size : {64, 128, 256, 512, 1024}) {
-    bufferBox_.addItem(juce::String(size) + " frames", id++);
+    bufferBox_.addItem(juce::String(size) + " " + TRANS("frames"), id++);
   }
   bufferBox_.setSelectedId(3, juce::dontSendNotification);  // 256 frames
 
@@ -73,7 +73,7 @@ AudioSettingsPanel::AudioSettingsPanel(const Theme& theme, core::CommandBus& bus
   levelSlider_.onValueChange = [this] { submitTone(); };
   addAndMakeVisible(levelSlider_);
 
-  warningLabel_.setText("Turn your speakers down first: the tone is a plain sine and is louder than it looks.",
+  warningLabel_.setText(TRANS("Turn your speakers down first: the tone is a plain sine and is louder than it looks."),
                         juce::dontSendNotification);
   styleLabel(warningLabel_, theme_, theme_.textDim);
   addAndMakeVisible(warningLabel_);
@@ -125,7 +125,7 @@ void AudioSettingsPanel::setDevices(const std::vector<core::AudioDeviceInfo>& de
 
 void AudioSettingsPanel::rebuildDeviceBox(const juce::String& preferredDevice) {
   deviceBox_.clear(juce::dontSendNotification);
-  deviceBox_.addItem("System default", kSystemDefaultItemId);
+  deviceBox_.addItem(TRANS("System default"), kSystemDefaultItemId);
   int selected = kSystemDefaultItemId;
   int id = kSystemDefaultItemId;
   for (const core::AudioDeviceInfo& device : outputs_) {

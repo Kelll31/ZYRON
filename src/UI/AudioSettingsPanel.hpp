@@ -40,16 +40,16 @@ class AudioSettingsPanel final : public juce::Component, private juce::Timer {
   const core::AudioEngineStatsSource& stats_;
   std::vector<core::AudioDeviceInfo> outputs_;
 
-  juce::Label apiLabel_{{}, "Audio API"};
-  juce::Label deviceLabel_{{}, "Output device"};
-  juce::Label rateLabel_{{}, "Sample rate"};
-  juce::Label bufferLabel_{{}, "Buffer size"};
+  juce::Label apiLabel_{{}, TRANS("Audio API")};
+  juce::Label deviceLabel_{{}, TRANS("Output device")};
+  juce::Label rateLabel_{{}, TRANS("Sample rate")};
+  juce::Label bufferLabel_{{}, TRANS("Buffer size")};
   juce::ComboBox apiBox_;
   juce::ComboBox deviceBox_;
   juce::ComboBox rateBox_;
   juce::ComboBox bufferBox_;
 
-  juce::ToggleButton toneButton_{"Test tone (440 Hz)"};
+  juce::ToggleButton toneButton_{TRANS("Test tone (440 Hz)")};
   juce::Slider levelSlider_;
   juce::Label warningLabel_;
   juce::Label statsLabel_;
