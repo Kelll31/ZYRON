@@ -13,7 +13,9 @@ add_library(zyron_ui STATIC
   Mixer/MixerComponent.cpp
   Library/LibraryComponent.cpp
   Settings/ModelManagerComponent.cpp
-  Settings/BackgroundQueueComponent.cpp)
+  Settings/BackgroundQueueComponent.cpp
+  AI/RecommendationPanel.cpp
+  AI/SetBuilderComponent.cpp)
 add_library(zyron::ui ALIAS zyron_ui)
 
 target_include_directories(zyron_ui PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/..")

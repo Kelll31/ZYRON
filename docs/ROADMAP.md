@@ -89,10 +89,10 @@ Legend: `⛔` needs an owner decision (see `DECISIONS.md`) · `dep:` task depend
 
 ## Phase 7 — AI assistant (§52, §55, §56, §84)
 
-- [ ] P7-01 Compatibility scoring (BPM window, Camelot, energy, genre, structure) + explanation. dep: P6-01
-- [ ] P7-02 Next-track recommendation panel (§52). dep: P7-01
-- [ ] P7-03 Set Builder (60-min set → ordered tracks) + energy-curve target and chart (§55, §56). dep: P7-01
-- [ ] P7-04 Semantic/AI search (§30). dep: P7-01
+- [x] P7-01 Compatibility scoring (BPM window, Camelot, energy, genre, structure) + explanation. Verified 2026-10-08: `CompatibilityScorer` in `src/AI/Recommendation/` and `src/Core/AI/RecommendationTypes.hpp` computes composite compatibility rating (BPM pitch bend %, Camelot wheel distance / relative / energy boost, energy trajectory goal Maintain/BuildUp/CoolDown, genre affinity, phrase duration ratio) with DJ explanation string. Unit tests in `tests/ai/test_compatibility_scorer.cpp`. dep: P6-01
+- [x] P7-02 Next-track recommendation panel (§52). Verified 2026-10-08: `TrackRecommender` in `src/AI/Recommendation/` implements `ITrackRecommender`; `RecommendationPanel` UI component in `src/UI/AI/` with table view, harmonic-only toggle, energy goal selector, pitch tolerance slider, and Load to Deck A..D actions. Unit tests in `tests/ai/test_track_recommender.cpp` and `tests/ui/test_ai_assistant_views.cpp`. dep: P7-01
+- [x] P7-03 Set Builder (60-min set → ordered tracks) + energy-curve target and chart (§55, §56). Verified 2026-10-08: `SetBuilder` in `src/AI/SetBuilder/` generates presets (Peak Hour, Progressive Climb, Wave, Warmup, Banger, Custom) and plans ordered track sequences matching target curves without duplicates; `SetBuilderComponent` and `EnergyCurveChart` UI in `src/UI/AI/` with curve visualization. Unit tests in `tests/ai/test_set_builder.cpp` and `tests/ui/test_ai_assistant_views.cpp`. dep: P7-01
+- [x] P7-04 Semantic/AI search (§30). Verified 2026-10-08: `SemanticSearch` in `src/AI/Recommendation/` and `src/Core/AI/SemanticSearchTypes.hpp` parses natural-language queries ("heavy neurofunk around 174 bpm", "chill liquid in 8a"), extracts BPM, Camelot keys, energy thresholds, genres, and keywords, and executes multi-criteria scored catalog ranking. Unit tests in `tests/ai/test_semantic_search.cpp`. dep: P7-01
 
 ## Phase 8 — AI DJ (§57–§60, §51)
 

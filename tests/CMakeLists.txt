@@ -83,7 +83,11 @@ zyron_add_test_executable(zyron_ai_tests
   ai/test_gpu_scheduler.cpp
   ai/test_model_manager.cpp
   ai/test_background_queue.cpp
-  ai/test_embedding_plugin.cpp)
+  ai/test_embedding_plugin.cpp
+  ai/test_compatibility_scorer.cpp
+  ai/test_track_recommender.cpp
+  ai/test_set_builder.cpp
+  ai/test_semantic_search.cpp)
 target_link_libraries(zyron_ai_tests PRIVATE zyron::ai zyron::platform)
 
 zyron_add_test_executable(zyron_recording_tests recording/test_master_recorder.cpp)
@@ -118,7 +122,8 @@ zyron_add_test_executable(zyron_ui_tests
   ui/test_library_component.cpp
   ui/test_two_deck_shell.cpp
   ui/test_model_manager_view.cpp
-  ui/test_background_queue_view.cpp)
+  ui/test_background_queue_view.cpp
+  ui/test_ai_assistant_views.cpp)
 target_link_libraries(zyron_ui_tests PRIVATE zyron::ui)
 
 zyron_add_test_executable(zyron_mvp1_gate_tests
