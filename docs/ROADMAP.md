@@ -96,11 +96,11 @@ Legend: `⛔` needs an owner decision (see `DECISIONS.md`) · `dep:` task depend
 
 ## Phase 8 — AI DJ (§57–§60, §51)
 
-- [ ] P8-01 Command timeline scheduler (beat-quantised), user-override-wins rule (ARCHITECTURE §5). dep: P3-06, P1-08
-- [ ] P8-02 Transition planner v1 (rule-based): start/duration, EQ/bass-swap, stem mutes, filter, volume (§57). dep: P8-01, P6-03
-- [ ] P8-03 Autonomous loop: select → load → sync → stems → transition → repeat; parameters Genre/Duration/Energy/BPM/Style (§58). dep: P8-02, P7-03
-- [ ] P8-04 Local LLM adapter: natural-language → validated Command/plan JSON only (§59, §60). dep: P8-01
-- [ ] P8-05 Safety: rate limits, dry-run mode, kill switch, audit log of AI commands (§76). dep: P8-03
+- [x] P8-01 Command timeline scheduler (beat-quantised), user-override-wins rule (ARCHITECTURE §5). Verified 2026-10-08: `CommandTimelineScheduler` in `src/AI/Timeline/` and `src/Core/AI/TimelineTypes.hpp` provides beat-quantised scheduling (None, QuarterBeat, Beat, Bar, TwoBars, FourBars, Phrase8..32), beat and time advancement, and strict user-override-wins rule (UI/MIDI manual commands immediately yield/cancel pending AI actions on that deck). Unit tests in `tests/ai/test_timeline_scheduler.cpp`. dep: P3-06, P1-08
+- [x] P8-02 Transition planner v1 (rule-based): start/duration, EQ/bass-swap, stem mutes, filter, volume (§57). Verified 2026-10-08: `TransitionPlanner` in `src/AI/Transition/` and `src/Core/AI/TransitionTypes.hpp` generates automated transition plans across BassSwap, StemBlend, QuickCut, FilterFade, and VolumeCrossfade styles with phrase-aligned scheduling. Unit tests in `tests/ai/test_transition_planner.cpp`. dep: P8-01, P6-03
+- [x] P8-03 Autonomous loop: select → load → sync → stems → transition → repeat; parameters Genre/Duration/Energy/BPM/Style (§58). Verified 2026-10-08: `AutonomousDjLoop` in `src/AI/Autonomous/` and `src/Core/AI/AutonomousDjTypes.hpp` sequences continuous autonomous mixing (set planning, loading, lead-time transition triggering, deck swapping A<->B, telemetry state reporting, pause/resume/stop). Unit tests in `tests/ai/test_autonomous_dj_loop.cpp`. dep: P8-02, P7-03
+- [x] P8-04 Local LLM adapter: natural-language → validated Command/plan JSON only (§59, §60). Verified 2026-10-08: `LocalLlmAdapter` in `src/AI/LLM/` and `src/Core/AI/LlmAdapterTypes.hpp` interprets natural-language DJ prompts (SPEC §60 "Сделай переход на что-нибудь тяжелее", kill bass, stem mutes) and validates structured JSON tool calls, enforcing strict security boundaries (SPEC §76). Unit tests in `tests/ai/test_local_llm_adapter.cpp`. dep: P8-01
+- [x] P8-05 Safety: rate limits, dry-run mode, kill switch, audit log of AI commands (§76). Verified 2026-10-08: `AiSafetyController` in `src/AI/Safety/` and `src/Core/AI/AiSafetyTypes.hpp` implements sliding window command bus rate limiting (50 cmd/s default), emergency kill switch with immediate command blocking, dry-run simulation mode, and chronological audit trail logging. Unit tests in `tests/ai/test_ai_safety.cpp`. dep: P8-03
 
 ## Phase 9 — Controllers (§47–§49)
 

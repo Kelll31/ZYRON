@@ -87,7 +87,12 @@ zyron_add_test_executable(zyron_ai_tests
   ai/test_compatibility_scorer.cpp
   ai/test_track_recommender.cpp
   ai/test_set_builder.cpp
-  ai/test_semantic_search.cpp)
+  ai/test_semantic_search.cpp
+  ai/test_timeline_scheduler.cpp
+  ai/test_transition_planner.cpp
+  ai/test_autonomous_dj_loop.cpp
+  ai/test_local_llm_adapter.cpp
+  ai/test_ai_safety.cpp)
 target_link_libraries(zyron_ai_tests PRIVATE zyron::ai zyron::platform)
 
 zyron_add_test_executable(zyron_recording_tests recording/test_master_recorder.cpp)

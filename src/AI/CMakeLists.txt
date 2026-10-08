@@ -14,7 +14,12 @@ add_library(zyron_ai STATIC
   Recommendation/CompatibilityScorer.cpp
   Recommendation/TrackRecommender.cpp
   Recommendation/SemanticSearch.cpp
-  SetBuilder/SetBuilder.cpp)
+  SetBuilder/SetBuilder.cpp
+  Timeline/CommandTimelineScheduler.cpp
+  Transition/TransitionPlanner.cpp
+  Autonomous/AutonomousDjLoop.cpp
+  LLM/LocalLlmAdapter.cpp
+  Safety/AiSafetyController.cpp)
 add_library(zyron::ai ALIAS zyron_ai)
 
 target_include_directories(zyron_ai PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/..")
