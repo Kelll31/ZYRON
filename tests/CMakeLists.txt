@@ -82,7 +82,8 @@ zyron_add_test_executable(zyron_ai_tests
   ai/test_nvml_gpu_probe.cpp
   ai/test_gpu_scheduler.cpp
   ai/test_model_manager.cpp
-  ai/test_background_queue.cpp)
+  ai/test_background_queue.cpp
+  ai/test_embedding_plugin.cpp)
 target_link_libraries(zyron_ai_tests PRIVATE zyron::ai zyron::platform)
 
 zyron_add_test_executable(zyron_recording_tests recording/test_master_recorder.cpp)
@@ -100,8 +101,11 @@ zyron_add_test_executable(zyron_analysis_tests
   analysis/test_features.cpp
   analysis/test_beat_detector.cpp
   analysis/test_beatgrid_editor.cpp
-  analysis/test_key_energy.cpp)
-target_link_libraries(zyron_analysis_tests PRIVATE zyron::analysis)
+  analysis/test_key_energy.cpp
+  analysis/test_structure_segmentation.cpp
+  analysis/test_energy_v2.cpp
+  analysis/test_chord_mini.cpp)
+target_link_libraries(zyron_analysis_tests PRIVATE zyron::analysis zyron::library)
 
 zyron_add_test_executable(zyron_stems_tests
   stems/test_stem_interfaces.cpp

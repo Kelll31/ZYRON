@@ -116,6 +116,16 @@ WindowMetrics computeMetrics(const float* audio, std::size_t numSamples, int sam
   return m;
 }
 
+float computeSignalRms(const float* audio, std::size_t numSamples) {
+  if (!audio || numSamples == 0) return 0.0f;
+  double sum = 0.0;
+  for (std::size_t i = 0; i < numSamples; ++i) {
+    const double s = audio[i];
+    sum += s * s;
+  }
+  return static_cast<float>(std::sqrt(sum / static_cast<double>(numSamples)));
+}
+
 }  // namespace
 
 float EnergyAnalyzer::computeWindowEnergy(const float* audio,
@@ -130,10 +140,18 @@ EnergyResult EnergyAnalyzer::analyze(const float* audio,
                                      std::size_t numSamples,
                                      int sampleRate,
                                      float stepSec) const {
+  return analyzeV2(audio, numSamples, sampleRate, nullptr, stepSec);
+}
+
+EnergyResult EnergyAnalyzer::analyzeV2(const float* masterAudio,
+                                       std::size_t numSamples,
+                                       int sampleRate,
+                                       const StemBuffers* stems,
+                                       float stepSec) const {
   EnergyResult result;
   result.curveStepSec = (stepSec > 0.05f) ? stepSec : 0.5f;
 
-  if (!audio || numSamples == 0 || sampleRate <= 0) {
+  if (!masterAudio || numSamples == 0 || sampleRate <= 0) {
     result.globalEnergy = 1.0f;
     return result;
   }
@@ -153,7 +171,7 @@ EnergyResult EnergyAnalyzer::analyze(const float* audio,
     const std::size_t windowLen = std::min(stepSamples, remaining);
     if (windowLen < 64) break;
 
-    const auto m = computeMetrics(audio + offset, windowLen, sampleRate, fft);
+    const auto m = computeMetrics(masterAudio + offset, windowLen, sampleRate, fft);
     allMetrics.push_back(m);
     rawCurve.push_back(m.energy);
   }
@@ -172,14 +190,15 @@ EnergyResult EnergyAnalyzer::analyze(const float* audio,
     result.energyCurve[i] = std::clamp(0.25f * prev + 0.50f * curr + 0.25f * next, 1.0f, 10.0f);
   }
 
-  // Calculate 85th percentile for global track dancefloor energy (SPEC section 53, 56)
+  // Calculate sorted curve and percentiles
   std::vector<float> sortedCurve = result.energyCurve;
   std::sort(sortedCurve.begin(), sortedCurve.end());
   const std::size_t p85Idx = std::min(sortedCurve.size() - 1,
                                       static_cast<std::size_t>(0.85f * static_cast<float>(sortedCurve.size())));
-  result.globalEnergy = std::clamp(sortedCurve[p85Idx], 1.0f, 10.0f);
+  const std::size_t p15Idx = std::min(sortedCurve.size() - 1,
+                                      static_cast<std::size_t>(0.15f * static_cast<float>(sortedCurve.size())));
 
-  // Average factor breakdowns over active high-energy sections (upper 50% percentile)
+  // Factor breakdowns over active high-energy sections (upper 50% percentile)
   const float medianVal = sortedCurve[sortedCurve.size() / 2];
   float sumL = 0.0f, sumS = 0.0f, sumT = 0.0f, sumB = 0.0f;
   std::size_t activeCount = 0;
@@ -200,6 +219,61 @@ EnergyResult EnergyAnalyzer::analyze(const float* audio,
     result.spectralScore = sumS * inv;
     result.transientScore = sumT * inv;
     result.bassScore = sumB * inv;
+  }
+
+  // Drop Intensity: Dynamic energy contrast between breakdown/buildup and drops
+  const float peakEnergy = sortedCurve[p85Idx];
+  const float minEnergy = sortedCurve[p15Idx];
+  result.dropIntensity = std::clamp((peakEnergy - minEnergy) / 5.5f, 0.0f, 1.0f);
+
+  // Stems analysis (P6-02, SPEC §53)
+  if (stems && stems->numSamples > 0 && (stems->drums || stems->bass || stems->vocals)) {
+    result.hasStemAnalysis = true;
+
+    // 1. Drum Density
+    if (stems->drums) {
+      const float drumRms = computeSignalRms(stems->drums, stems->numSamples);
+      const float drumDb = 20.0f * std::log10(drumRms + 1e-9f);
+      const float drumLoudness = std::clamp((drumDb - (-36.0f)) / (-8.0f - (-36.0f)), 0.0f, 1.0f);
+      result.drumDensity = std::clamp(0.6f * drumLoudness + 0.4f * result.transientScore, 0.0f, 1.0f);
+    } else {
+      result.drumDensity = result.transientScore;
+    }
+
+    // 2. Bass Intensity
+    if (stems->bass) {
+      const float bassRms = computeSignalRms(stems->bass, stems->numSamples);
+      const float bassDb = 20.0f * std::log10(bassRms + 1e-9f);
+      const float bassLoudness = std::clamp((bassDb - (-36.0f)) / (-8.0f - (-36.0f)), 0.0f, 1.0f);
+      result.bassIntensity = std::clamp(0.6f * bassLoudness + 0.4f * result.bassScore, 0.0f, 1.0f);
+    } else {
+      result.bassIntensity = result.bassScore;
+    }
+
+    // 3. Vocal Density
+    if (stems->vocals) {
+      const float vocalRms = computeSignalRms(stems->vocals, stems->numSamples);
+      const float vocalDb = 20.0f * std::log10(vocalRms + 1e-9f);
+      result.vocalDensity = std::clamp((vocalDb - (-42.0f)) / (-12.0f - (-42.0f)), 0.0f, 1.0f);
+    } else {
+      result.vocalDensity = 0.0f;
+    }
+
+    // High-fidelity composite energy v2
+    const float composite = 0.25f * result.loudnessScore +
+                            0.25f * result.bassIntensity +
+                            0.20f * result.drumDensity +
+                            0.15f * result.dropIntensity +
+                            0.10f * result.spectralScore +
+                            0.05f * result.vocalDensity;
+    result.globalEnergy = std::clamp(1.0f + 9.0f * composite, 1.0f, 10.0f);
+  } else {
+    // Non-stem fallback: estimate factors from master signal
+    result.hasStemAnalysis = false;
+    result.drumDensity = result.transientScore;
+    result.bassIntensity = result.bassScore;
+    result.vocalDensity = std::clamp(result.spectralScore * 0.5f, 0.0f, 1.0f);
+    result.globalEnergy = std::clamp(sortedCurve[p85Idx], 1.0f, 10.0f);
   }
 
   return result;

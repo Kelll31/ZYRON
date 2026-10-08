@@ -81,11 +81,11 @@ Legend: `⛔` needs an owner decision (see `DECISIONS.md`) · `dep:` task depend
 
 ## Phase 6 — AI analysis (§53, §54)
 
-- [ ] P6-01 Track structure: intro/build/drop/break/drop2/outro segmentation (§54). dep: P3-10
-- [ ] P6-02 Energy v2 (loudness, spectral density, drum/bass/vocal density, drop intensity) (§53). dep: P5-05
-- [ ] P6-03 Intro/outro/mix-point markers persisted as cues of type Intro/Outro/Drop/Break. dep: P6-01
-- [ ] P6-04 Chord/harmony analysis via **ChordMini ONNX** (CQT per `cqt-plan.bin`) → harmonic compatibility input. dep: P3-13
-- [ ] P6-05 Optional embeddings (MERT / MuQ / CLAP) as default-off plug-ins under ADR-0013 (NC licences): track similarity + text search. dep: P5-08
+- [x] P6-01 Track structure: intro/build/drop/break/drop2/outro segmentation (§54). Verified 2026-10-08: `StructureSegmenter` and `TrackStructure` in `src/Analysis/Structure/` detects intro, build, drop 1, breakdown, drop 2, and outro with phrase/bar alignment to beatgrids and energy trajectories. Unit tests in `tests/analysis/test_structure_segmentation.cpp`. dep: P3-10
+- [x] P6-02 Energy v2 (loudness, spectral density, drum/bass/vocal density, drop intensity) (§53). Verified 2026-10-08: `EnergyAnalyzer::analyzeV2` in `src/Analysis/Energy/` supporting separated stem buffers (`StemBuffers`), measuring drum density, bass intensity, vocal density, and drop contrast intensity, with master fallback. Unit tests in `tests/analysis/test_energy_v2.cpp`. dep: P5-05
+- [x] P6-03 Intro/outro/mix-point markers persisted as cues of type Intro/Outro/Drop/Break. Verified 2026-10-08: `StructureSegmenter::generateMixPointCues` maps structure transition points to hot cue slots with DJ color coding; persisted to SQLite with `source='auto'`, strictly preserving user cues (`source='user'`). Unit tests in `tests/analysis/test_structure_segmentation.cpp`. dep: P6-01
+- [x] P6-04 Chord/harmony analysis via **ChordMini ONNX** (CQT per `cqt-plan.bin`) → harmonic compatibility input. Verified 2026-10-08: `ChordAnalyzer` in `src/Analysis/Chord/` with 170-class chord recognition contract (14 qualities × 12 roots + silence), CQT feature extraction, frame-by-frame progression aggregation, and transition compatibility scoring. Unit tests in `tests/analysis/test_chord_mini.cpp`. dep: P3-13
+- [x] P6-05 Optional embeddings (MERT / MuQ / CLAP) as default-off plug-ins under ADR-0013 (NC licences): track similarity + text search. Verified 2026-10-08: `EmbeddingPluginService` and `TrackEmbedding` in `src/AI/Embedding/` and `src/Core/AI/EmbeddingTypes.hpp`, enforced default-off with CC BY-NC 4.0 license notices, cosine similarity, and nearest-neighbor search. Unit tests in `tests/ai/test_embedding_plugin.cpp`. dep: P5-08
 
 ## Phase 7 — AI assistant (§52, §55, §56, §84)
 

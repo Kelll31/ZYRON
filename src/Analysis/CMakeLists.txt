@@ -14,7 +14,9 @@ add_library(zyron_analysis STATIC
   Bpm/BeatgridEditor.cpp
   Key/MusicalKey.cpp
   Key/KeyDetector.cpp
-  Energy/EnergyAnalyzer.cpp)
+  Energy/EnergyAnalyzer.cpp
+  Structure/StructureSegmenter.cpp
+  Chord/ChordAnalyzer.cpp)
 add_library(zyron::analysis ALIAS zyron_analysis)
 
 target_include_directories(zyron_analysis PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/..")
